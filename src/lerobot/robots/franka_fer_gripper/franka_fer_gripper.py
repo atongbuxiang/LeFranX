@@ -5,7 +5,6 @@ from typing import Any, Dict
 
 from lerobot.cameras.realsense import RealSenseCamera
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.robots.franka_fer import FrankaFER
 from lerobot.robots.gripper import Gripper
 from lerobot.robots.robot import Robot
@@ -63,7 +62,7 @@ class FrankaFERGripper(Robot):
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         try:
             self.arm.connect(calibrate=calibrate)
@@ -92,17 +91,17 @@ class FrankaFERGripper(Robot):
 
     def configure(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
 
     def calibrate(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         self.arm.calibrate()
         self.gripper.calibrate()
 
     def get_observation(self) -> Dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
 
         obs_dict = {}
 
@@ -138,7 +137,7 @@ class FrankaFERGripper(Robot):
 
     def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
 
         arm_action = {}
         gripper_action = {}
@@ -172,7 +171,7 @@ class FrankaFERGripper(Robot):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
 
         try:
             self.arm.disconnect()

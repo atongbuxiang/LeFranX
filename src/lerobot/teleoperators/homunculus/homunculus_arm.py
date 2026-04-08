@@ -22,7 +22,6 @@ from typing import Deque
 
 import serial
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors.motors_bus import MotorCalibration, MotorNormMode
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
@@ -96,7 +95,7 @@ class HomunculusArm(Teleoperator):
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         if not self.serial.is_open:
             self.serial.open()
@@ -302,7 +301,7 @@ class HomunculusArm(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
+            RuntimeError(f"{self} is not connected.")
 
         self.stop_event.set()
         self.thread.join(timeout=1)

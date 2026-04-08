@@ -4,7 +4,6 @@ from functools import cached_property
 from typing import Any, Dict
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.robots.franka_fer import FrankaFER
 from lerobot.robots.robot import Robot
 from lerobot.robots.xhand import XHand
@@ -91,7 +90,7 @@ class FrankaFERXHand(Robot):
     def connect(self, calibrate: bool = True) -> None:
         """Connect to both arm and hand robots"""
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
         
         logger.info("Connecting Franka FER + XHand composite robot...")
         
@@ -135,7 +134,7 @@ class FrankaFERXHand(Robot):
     def configure(self) -> None:
         """Configure both arm and hand"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         logger.info("Configuring composite robot...")
         # Note: Individual robots configure themselves during connect()
@@ -145,7 +144,7 @@ class FrankaFERXHand(Robot):
     def calibrate(self) -> None:
         """Calibrate both arm and hand"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         logger.info("Calibrating composite robot...")
         self.arm.calibrate()
@@ -155,7 +154,7 @@ class FrankaFERXHand(Robot):
     def get_observation(self) -> Dict[str, Any]:
         """Get combined observations from arm and hand"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         obs_dict = {}
         
@@ -192,7 +191,7 @@ class FrankaFERXHand(Robot):
     def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Send combined actions to arm and hand"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         # Split action into arm and hand components
         arm_action = {}
@@ -252,7 +251,7 @@ class FrankaFERXHand(Robot):
     def disconnect(self) -> None:
         """Disconnect both arm and hand"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         logger.info("Disconnecting composite robot...")
         

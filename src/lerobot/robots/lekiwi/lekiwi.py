@@ -23,7 +23,6 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
@@ -110,7 +109,7 @@ class LeKiwi(Robot):
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
@@ -340,7 +339,7 @@ class LeKiwi(Robot):
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         # Read actuators position for arm and vel for base
         start = time.perf_counter()
@@ -377,13 +376,13 @@ class LeKiwi(Robot):
         Thus, this function always returns the action actually sent.
 
         Raises:
-            RobotDeviceNotConnectedError: if robot is not connected.
+            RobotRuntimeError: if robot is not connected.
 
         Returns:
             np.ndarray: the action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         arm_goal_pos = {k: v for k, v in action.items() if k.endswith(".pos")}
         base_goal_vel = {k: v for k, v in action.items() if k.endswith(".vel")}
@@ -413,7 +412,7 @@ class LeKiwi(Robot):
 
     def disconnect(self):
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         self.stop_base()
         self.bus.disconnect(self.config.disable_torque_on_disconnect)

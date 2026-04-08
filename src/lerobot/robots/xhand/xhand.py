@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from .xhand_config import XHandConfig
@@ -76,7 +75,7 @@ class XHand(Robot):
     def connect(self, calibrate: bool = True) -> None:
         """Connect to the XHand robot"""
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
         
         logger.info(f"Connecting to XHand via {self.config.protocol}")
         
@@ -171,7 +170,7 @@ class XHand(Robot):
     def configure(self) -> None:
         """Configure robot with current settings"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         logger.info("Configuring XHand robot...")
         # TODO: Implement configuration procedure (set control mode, gains, etc.)
@@ -180,7 +179,7 @@ class XHand(Robot):
     def calibrate(self) -> None:
         """Calibrate the XHand robot"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         logger.info("Calibrating XHand robot...")
         # TODO: Implement calibration procedure
@@ -189,7 +188,7 @@ class XHand(Robot):
     def get_observation(self) -> Dict[str, Any]:
         """Get current robot observation"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         obs_dict = {}
         
@@ -261,7 +260,7 @@ class XHand(Robot):
     def send_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         """Send action to robot"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         # Extract joint positions from action dict
         target_positions = []
@@ -334,7 +333,7 @@ class XHand(Robot):
     def disconnect(self) -> None:
         """Disconnect from robot"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         try:
             # TODO: Implement proper disconnection

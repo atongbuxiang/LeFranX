@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument("--realsense-id", default="")
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
-    parser.add_argument("--use-depth", action="store_true", default=True)
+    parser.add_argument("--use-depth", action="store_true", default=False)
     return parser.parse_args()
 
 

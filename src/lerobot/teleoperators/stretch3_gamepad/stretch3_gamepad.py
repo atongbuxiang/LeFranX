@@ -20,7 +20,6 @@ import numpy as np
 from stretch_body.gamepad_teleop import GamePadTeleop
 from stretch_body.robot_params import RobotParams
 
-from lerobot.errors import DeviceAlreadyConnectedError
 
 from ..teleoperator import Teleoperator
 from .configuration_stretch3 import Stretch3GamePadConfig
@@ -87,7 +86,7 @@ class Stretch3GamePad(Teleoperator):
 
     def connect(self) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(
+            raise RuntimeError(
                 "ManipulatorRobot is already connected. Do not run `robot.connect()` twice."
             )
 

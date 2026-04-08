@@ -32,7 +32,6 @@ import serial
 from deepdiff import DeepDiff
 from tqdm import tqdm
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.utils import enter_pressed, move_cursor_up
 
 NameOrID: TypeAlias = str | int
@@ -425,11 +424,11 @@ class MotorsBus(abc.ABC):
                 integrity checks specific to the implementation. Defaults to `True`.
 
         Raises:
-            DeviceAlreadyConnectedError: The port is already open.
+            RuntimeError: The port is already open.
             ConnectionError: The underlying SDK failed to open the port or the handshake did not succeed.
         """
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(
+            raise RuntimeError(
                 f"{self.__class__.__name__}('{self.port}') is already connected. Do not call `{self.__class__.__name__}.connect()` twice."
             )
 
@@ -462,7 +461,7 @@ class MotorsBus(abc.ABC):
                 after disconnect.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. Try running `{self.__class__.__name__}.connect()` first."
             )
 
@@ -934,7 +933,7 @@ class MotorsBus(abc.ABC):
             Value: Raw or normalised value depending on *normalize*.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 
@@ -1006,7 +1005,7 @@ class MotorsBus(abc.ABC):
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 
@@ -1070,7 +1069,7 @@ class MotorsBus(abc.ABC):
             dict[str, Value]: Mapping *motor name → value*.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 
@@ -1167,7 +1166,7 @@ class MotorsBus(abc.ABC):
             num_retry (int, optional): Retry attempts.  Defaults to `0`.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 f"{self.__class__.__name__}('{self.port}') is not connected. You need to run `{self.__class__.__name__}.connect()`."
             )
 

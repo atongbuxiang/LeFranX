@@ -31,7 +31,6 @@ if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"
 import cv2
 import numpy as np
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..utils import get_cv2_backend, get_cv2_rotation
@@ -148,12 +147,12 @@ class OpenCVCamera(Camera):
         (FPS, width, height), and performs initial checks.
 
         Raises:
-            DeviceAlreadyConnectedError: If the camera is already connected.
+            RuntimeError: If the camera is already connected.
             ConnectionError: If the specified camera index/path is not found or the camera is found but fails to open.
             RuntimeError: If the camera opens but fails to apply requested FPS/resolution settings.
         """
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
+            raise RuntimeError(f"{self} is already connected.")
 
         # Use 1 thread for OpenCV operations to avoid potential conflicts or
         # blocking in multi-threaded applications, especially during data collection.
@@ -193,11 +192,11 @@ class OpenCVCamera(Camera):
         Raises:
             RuntimeError: If the camera fails to set any of the specified properties
                           to the requested value.
-            DeviceNotConnectedError: If the camera is not connected when attempting
+            RuntimeError: If the camera is not connected when attempting
                                      to configure settings.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
+            raise RuntimeError(f"Cannot configure settings for {self} as it is not connected.")
 
         if self.fps is None:
             self.fps = self.videocapture.get(cv2.CAP_PROP_FPS)
@@ -307,13 +306,13 @@ class OpenCVCamera(Camera):
                        color mode and applying any configured rotation.
 
         Raises:
-            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is not connected.
             RuntimeError: If reading the frame from the camera fails or if the
                           received frame dimensions don't match expectations before rotation.
             ValueError: If an invalid `color_mode` is requested.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         start_time = time.perf_counter()
 
@@ -381,7 +380,7 @@ class OpenCVCamera(Camera):
         2. Stores result in latest_frame (thread-safe)
         3. Sets new_frame_event to notify listeners
 
-        Stops on DeviceNotConnectedError, logs other errors and continues.
+        Stops on RuntimeError, logs other errors and continues.
         """
         while not self.stop_event.is_set():
             try:
@@ -391,7 +390,7 @@ class OpenCVCamera(Camera):
                     self.latest_frame = color_image
                 self.new_frame_event.set()
 
-            except DeviceNotConnectedError:
+            except RuntimeError:
                 break
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
@@ -436,12 +435,12 @@ class OpenCVCamera(Camera):
                        (height, width, channels), processed according to configuration.
 
         Raises:
-            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is not connected.
             TimeoutError: If no frame becomes available within the specified timeout.
             RuntimeError: If an unexpected error occurs.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
@@ -470,10 +469,10 @@ class OpenCVCamera(Camera):
         VideoCapture object.
 
         Raises:
-            DeviceNotConnectedError: If the camera is already disconnected.
+            RuntimeError: If the camera is already disconnected.
         """
         if not self.is_connected and self.thread is None:
-            raise DeviceNotConnectedError(f"{self} not connected.")
+            raise RuntimeError(f"{self} not connected.")
 
         if self.thread is not None:
             self._stop_read_thread()

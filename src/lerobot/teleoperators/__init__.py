@@ -15,22 +15,7 @@
 # limitations under the License.
 
 from .config import TeleoperatorConfig
-from .teleoperators import Teleoperator
+from .teleoperator import Teleoperator
 from .utils import make_teleoperator_from_config
 
-# Import teleoperator modules to trigger registration
-from . import (  # noqa: F401
-    bi_so100_leader,
-    franka_fer_gripper_spacemouse,
-    franka_fer_gripper_subarm,
-    franka_fer_spacemouse,
-    franka_fer_vr,
-    franka_fer_xhand_vr,
-    franka_fer_subarm,
-    homunculus,
-    koch_leader,
-    so100_leader,
-    so101_leader,
-    sofranka,
-    xhand_vr,
-)
+__all__ = ["Teleoperator", "TeleoperatorConfig", "make_teleoperator_from_config"]

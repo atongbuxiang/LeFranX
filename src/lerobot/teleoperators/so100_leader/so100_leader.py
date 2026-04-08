@@ -17,7 +17,6 @@
 import logging
 import time
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import (
     FeetechMotorsBus,
@@ -68,7 +67,7 @@ class SO100Leader(Teleoperator):
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
@@ -153,7 +152,7 @@ class SO100Leader(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
+            RuntimeError(f"{self} is not connected.")
 
         self.bus.disconnect()
         logger.info(f"{self} disconnected.")

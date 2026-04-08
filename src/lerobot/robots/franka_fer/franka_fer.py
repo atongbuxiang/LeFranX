@@ -8,7 +8,6 @@ import numpy as np
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.cameras.realsense import RealSenseCamera
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -102,7 +101,7 @@ class FrankaFER(Robot):
     def connect(self, calibrate: bool = True) -> None:
         """Connect to the robot"""
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
         
         # Check server health first
         if not self._health_check():
@@ -139,7 +138,7 @@ class FrankaFER(Robot):
     def configure(self) -> None:
         """Configure robot with current settings"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         # The C++ server applies dynamics factor when it connects to the robot
         # No additional configuration needed here
@@ -187,7 +186,7 @@ class FrankaFER(Robot):
     def get_observation(self) -> dict[str, Any]:
         """Get current robot observation"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         obs_dict = {}
         
@@ -238,7 +237,7 @@ class FrankaFER(Robot):
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send action to robot"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         # Extract joint positions from action dict
         joint_positions = []
@@ -275,7 +274,7 @@ class FrankaFER(Robot):
     def disconnect(self) -> None:
         """Disconnect from robot"""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         
         # Send disconnect command and close socket
         try:

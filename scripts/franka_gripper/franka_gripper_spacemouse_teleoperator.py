@@ -19,19 +19,18 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Teleoperate Franka + gripper with SpaceMouse")
-    parser.add_argument("--robot-ip", default="192.168.18.1")
+    parser.add_argument("--robot-ip", default="172.16.0.1")
     parser.add_argument("--robot-port", type=int, default=5000)
-    parser.add_argument("--gripper-port", default="/dev/ttyACM1")
+    parser.add_argument("--gripper-port", default="/dev/ttyUSB0")
     parser.add_argument("--gripper-baud", type=int, default=115200)
     parser.add_argument("--gripper-home", type=float, default=1.0)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--camera-name", default="realsense")
-    parser.add_argument("--realsense-id", default="")
+    parser.add_argument("--realsense-id", default="241122305042")
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true")
     return parser.parse_args()
-
 
 def main():
     args = parse_args()
@@ -46,7 +45,12 @@ def main():
         dt = 1.0 / args.fps
         while True:
             loop_start = time.perf_counter()
-            robot.send_action(teleop.get_action())
+            print("--------------------------------")
+            print(teleop.get_action())
+            print("--------------------------------")
+            print(robot.arm._get_joint_positions())
+            print("--------------------------------")
+            # robot.send_action(teleop.get_action())
             elapsed = time.perf_counter() - loop_start
             if elapsed < dt:
                 time.sleep(dt - elapsed)

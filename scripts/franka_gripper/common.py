@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
-from typing import Iterable
-
-import torch
+from typing import TYPE_CHECKING, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from lerobot.cameras.realsense import RealSenseCameraConfig
 from lerobot.cameras.configs import ColorMode
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.robots.franka_fer.franka_fer_config import FrankaFERConfig
 from lerobot.robots.franka_fer_gripper.franka_fer_gripper_config import FrankaFERGripperConfig
 from lerobot.robots.gripper.config_gripper import GripperConfig
+
+if TYPE_CHECKING:
+    import torch
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 DEFAULT_HOME = [0, -0.785, 0, -2.356, 0, 1.571, -0.9]
@@ -80,6 +83,8 @@ def build_robot_config(args) -> FrankaFERGripperConfig:
 
 
 def load_dataset(dataset_path: str) -> LeRobotDataset:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
     dataset_path = Path(dataset_path)
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
@@ -87,6 +92,8 @@ def load_dataset(dataset_path: str) -> LeRobotDataset:
 
 
 def get_episode_actions(dataset: LeRobotDataset, episode_idx: int, action_keys: list[str]) -> list[dict[str, float]]:
+    import torch
+
     if hasattr(dataset, "episode_data_index") and "from" in dataset.episode_data_index:
         start_idx = dataset.episode_data_index["from"][episode_idx]
         end_idx = dataset.episode_data_index["to"][episode_idx]

@@ -23,7 +23,6 @@ from typing import Any
 import cv2
 import numpy as np
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_lekiwi import LeKiwiClientConfig
@@ -115,7 +114,7 @@ class LeKiwiClient(Robot):
         """Establishes ZMQ sockets with the remote mobile robot"""
 
         if self._is_connected:
-            raise DeviceAlreadyConnectedError(
+            raise RuntimeError(
                 "LeKiwi Daemon is already connected. Do not run `robot.connect()` twice."
             )
 
@@ -135,7 +134,7 @@ class LeKiwiClient(Robot):
         poller.register(self.zmq_observation_socket, zmq.POLLIN)
         socks = dict(poller.poll(self.connect_timeout_s * 1000))
         if self.zmq_observation_socket not in socks or socks[self.zmq_observation_socket] != zmq.POLLIN:
-            raise DeviceNotConnectedError("Timeout waiting for LeKiwi Host to connect expired.")
+            raise RuntimeError("Timeout waiting for LeKiwi Host to connect expired.")
 
         self._is_connected = True
 
@@ -258,7 +257,7 @@ class LeKiwiClient(Robot):
         and a camera frame. Receives over ZMQ, translate to body-frame vel
         """
         if not self._is_connected:
-            raise DeviceNotConnectedError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
+            raise RuntimeError("LeKiwiClient is not connected. You need to run `robot.connect()`.")
 
         frames, obs_dict = self._get_data()
 
@@ -313,13 +312,13 @@ class LeKiwiClient(Robot):
             action (np.ndarray): array containing the goal positions for the motors.
 
         Raises:
-            RobotDeviceNotConnectedError: if robot is not connected.
+            RobotRuntimeError: if robot is not connected.
 
         Returns:
             np.ndarray: the action sent to the motors, potentially clipped.
         """
         if not self._is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 "ManipulatorRobot is not connected. You need to run `robot.connect()`."
             )
 
@@ -336,7 +335,7 @@ class LeKiwiClient(Robot):
         """Cleans ZMQ comms"""
 
         if not self._is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 "LeKiwi is not connected. You need to run `robot.connect()` before disconnecting."
             )
         self.zmq_observation_socket.close()

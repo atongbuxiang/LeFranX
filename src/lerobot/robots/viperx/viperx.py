@@ -19,7 +19,6 @@ from typing import Any
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.constants import OBS_STATE
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.dynamixel import (
     DynamixelMotorsBus,
@@ -92,7 +91,7 @@ class ViperX(Robot):
         and torque can be safely disabled to run calibration.
         """
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         self.bus.connect()
         if not self.is_calibrated and calibrate:
@@ -173,7 +172,7 @@ class ViperX(Robot):
     def get_observation(self) -> dict[str, Any]:
         """The returned observations do not have a batch dimension."""
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         obs_dict = {}
 
@@ -207,7 +206,7 @@ class ViperX(Robot):
             dict[str, float]: The action sent to the motors, potentially clipped.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
 
@@ -224,7 +223,7 @@ class ViperX(Robot):
 
     def disconnect(self):
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         self.bus.disconnect(self.config.disable_torque_on_disconnect)
         for cam in self.cameras.values():

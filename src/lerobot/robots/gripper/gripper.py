@@ -2,7 +2,6 @@ import logging
 from functools import cached_property
 from typing import Any
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
 from .config_gripper import GripperConfig
@@ -36,7 +35,7 @@ class Gripper(Robot):
     def connect(self, calibrate: bool = True) -> None:
         del calibrate
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         self.driver = ZhixingDriver(
             serial_dev=self.config.serial_port,
@@ -58,18 +57,18 @@ class Gripper(Robot):
 
     def configure(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         if self.config.default_force is not None:
             self.driver.set_force(int(self.config.default_force))
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         return {"gripper.pos": float(self.driver.read_pos())}
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         if "gripper.pos" not in action:
             raise ValueError("Missing action key 'gripper.pos'")
 
@@ -79,7 +78,7 @@ class Gripper(Robot):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
+            raise RuntimeError(f"{self} is not connected")
         self.driver.stop()
         self.driver = None
         self._is_connected = False

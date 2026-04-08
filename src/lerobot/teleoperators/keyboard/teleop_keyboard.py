@@ -21,7 +21,6 @@ import time
 from queue import Queue
 from typing import Any
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..teleoperator import Teleoperator
 from .configuration_keyboard import KeyboardEndEffectorTeleopConfig, KeyboardTeleopConfig
@@ -82,7 +81,7 @@ class KeyboardTeleop(Teleoperator):
 
     def connect(self) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(
+            raise RuntimeError(
                 "Keyboard is already connected. Do not run `robot.connect()` twice."
             )
 
@@ -123,7 +122,7 @@ class KeyboardTeleop(Teleoperator):
         before_read_t = time.perf_counter()
 
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
             )
 
@@ -140,7 +139,7 @@ class KeyboardTeleop(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 "KeyboardTeleop is not connected. You need to run `robot.connect()` before `disconnect()`."
             )
         if self.listener is not None:
@@ -188,7 +187,7 @@ class KeyboardEndEffectorTeleop(KeyboardTeleop):
 
     def get_action(self) -> dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 "KeyboardTeleop is not connected. You need to run `connect()` before `get_action()`."
             )
 

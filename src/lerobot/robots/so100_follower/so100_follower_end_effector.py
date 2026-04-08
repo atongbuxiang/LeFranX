@@ -21,7 +21,6 @@ from typing import Any
 import numpy as np
 
 from lerobot.cameras import make_cameras_from_configs
-from lerobot.errors import DeviceNotConnectedError
 from lerobot.model.kinematics import RobotKinematics
 from lerobot.motors import Motor, MotorNormMode
 from lerobot.motors.feetech import FeetechMotorsBus
@@ -105,7 +104,7 @@ class SO100FollowerEndEffector(SO100Follower):
         """
 
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         # Convert action to numpy array if not already
         if isinstance(action, dict):
@@ -177,7 +176,7 @@ class SO100FollowerEndEffector(SO100Follower):
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         # Read arm position
         start = time.perf_counter()

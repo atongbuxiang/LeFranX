@@ -29,7 +29,6 @@ try:
 except Exception as e:
     logging.info(f"Could not import realsense: {e}")
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
@@ -158,13 +157,13 @@ class RealSenseCamera(Camera):
         and optionally depth), starts the pipeline, and validates the actual stream settings.
 
         Raises:
-            DeviceAlreadyConnectedError: If the camera is already connected.
+            RuntimeError: If the camera is already connected.
             ValueError: If the configuration is invalid (e.g., missing serial/name, name not unique).
             ConnectionError: If the camera is found but fails to start the pipeline or no RealSense devices are detected at all.
             RuntimeError: If the pipeline starts but fails to apply requested settings.
         """
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} is already connected.")
+            raise RuntimeError(f"{self} is already connected.")
 
         self.rs_pipeline = rs.pipeline()
         rs_config = rs.config()
@@ -288,10 +287,10 @@ class RealSenseCamera(Camera):
         swapping width/height when needed. Original capture dimensions are always stored.
 
         Raises:
-            DeviceNotConnectedError: If device is not connected.
+            RuntimeError: If device is not connected.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
+            raise RuntimeError(f"Cannot validate settings for {self} as it is not connected.")
 
         stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
 
@@ -323,12 +322,12 @@ class RealSenseCamera(Camera):
                   of type `np.uint16` (raw depth values in millimeters) and rotation.
 
         Raises:
-            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is not connected.
             RuntimeError: If reading frames from the pipeline fails or frames are invalid.
         """
 
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
         if not self.use_depth:
             raise RuntimeError(
                 f"Failed to capture depth frame '.read_depth()'. Depth stream is not enabled for {self}."
@@ -366,13 +365,13 @@ class RealSenseCamera(Camera):
               (height, width, channels), processed according to `color_mode` and rotation.
 
         Raises:
-            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is not connected.
             RuntimeError: If reading frames from the pipeline fails or frames are invalid.
             ValueError: If an invalid `color_mode` is requested.
         """
 
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         start_time = time.perf_counter()
 
@@ -447,7 +446,7 @@ class RealSenseCamera(Camera):
         2. Stores result in latest_frame (thread-safe)
         3. Sets new_frame_event to notify listeners
 
-        Stops on DeviceNotConnectedError, logs other errors and continues.
+        Stops on RuntimeError, logs other errors and continues.
         """
         while not self.stop_event.is_set():
             try:
@@ -457,7 +456,7 @@ class RealSenseCamera(Camera):
                     self.latest_frame = color_image
                 self.new_frame_event.set()
 
-            except DeviceNotConnectedError:
+            except RuntimeError:
                 break
             except Exception as e:
                 logger.warning(f"Error reading frame in background thread for {self}: {e}")
@@ -503,12 +502,12 @@ class RealSenseCamera(Camera):
             The latest captured frame data (color image), processed according to configuration.
 
         Raises:
-            DeviceNotConnectedError: If the camera is not connected.
+            RuntimeError: If the camera is not connected.
             TimeoutError: If no frame data becomes available within the specified timeout.
             RuntimeError: If the background thread died unexpectedly or another error occurs.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+            raise RuntimeError(f"{self} is not connected.")
 
         if self.thread is None or not self.thread.is_alive():
             self._start_read_thread()
@@ -536,11 +535,11 @@ class RealSenseCamera(Camera):
         Stops the background read thread (if running) and stops the RealSense pipeline.
 
         Raises:
-            DeviceNotConnectedError: If the camera is already disconnected (pipeline not running).
+            RuntimeError: If the camera is already disconnected (pipeline not running).
         """
 
         if not self.is_connected and self.thread is None:
-            raise DeviceNotConnectedError(
+            raise RuntimeError(
                 f"Attempted to disconnect {self}, but it appears already disconnected."
             )
 

@@ -22,7 +22,6 @@ from typing import Deque
 
 import serial
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.motors import MotorCalibration
 from lerobot.motors.motors_bus import MotorNormMode
 from lerobot.teleoperators.homunculus.joints_translation import homunculus_glove_to_hope_jr_hand
@@ -122,7 +121,7 @@ class HomunculusGlove(Teleoperator):
 
     def connect(self, calibrate: bool = True) -> None:
         if self.is_connected:
-            raise DeviceAlreadyConnectedError(f"{self} already connected")
+            raise RuntimeError(f"{self} already connected")
 
         if not self.serial.is_open:
             self.serial.open()
@@ -330,7 +329,7 @@ class HomunculusGlove(Teleoperator):
 
     def disconnect(self) -> None:
         if not self.is_connected:
-            DeviceNotConnectedError(f"{self} is not connected.")
+            RuntimeError(f"{self} is not connected.")
 
         self.stop_event.set()
         self.thread.join(timeout=1)
