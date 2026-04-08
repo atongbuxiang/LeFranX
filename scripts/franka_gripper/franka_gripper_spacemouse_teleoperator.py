@@ -45,12 +45,8 @@ def main():
         dt = 1.0 / args.fps
         while True:
             loop_start = time.perf_counter()
-            print("--------------------------------")
-            print(teleop.get_action())
-            print("--------------------------------")
-            print(robot.arm._get_joint_positions())
-            print("--------------------------------")
-            # robot.send_action(teleop.get_action())
+            action = teleop.get_action()
+            robot.send_action(action)
             elapsed = time.perf_counter() - loop_start
             if elapsed < dt:
                 time.sleep(dt - elapsed)

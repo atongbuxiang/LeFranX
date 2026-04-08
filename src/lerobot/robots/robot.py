@@ -56,6 +56,8 @@ class Robot(abc.ABC):
             self._load_calibration()
 
     def __str__(self) -> str:
+        if self.id is None:
+            return self.__class__.__name__
         return f"{self.id} {self.__class__.__name__}"
 
     # TODO(aliberts): create a proper Feature class for this that links with datasets

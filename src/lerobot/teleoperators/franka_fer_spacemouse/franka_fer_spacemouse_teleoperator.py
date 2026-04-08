@@ -1,5 +1,7 @@
 import logging
-from typing import Any, Dict
+import math
+from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -9,6 +11,88 @@ from .config_franka_fer_spacemouse import FrankaFERSpaceMouseTeleoperatorConfig
 from .spacemouse_reader import SpaceMouseStateReader
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_quaternion_xyzw(quaternion: np.ndarray) -> np.ndarray:
+    norm = np.linalg.norm(quaternion)
+    if norm <= 0.0:
+        return np.array([0.0, 0.0, 0.0, 1.0], dtype=float)
+    return quaternion / norm
+
+
+def _quaternion_multiply_xyzw(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return np.array(
+        [
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ],
+        dtype=float,
+    )
+
+
+@dataclass(slots=True)
+class DeltaPoseCommand:
+    translation: list[float]
+    quaternion: list[float]
+
+
+@dataclass(slots=True)
+class WristPoseInput:
+    position: list[float]
+    quaternion: list[float]
+    fist_state: str = "open"
+    valid: bool = True
+
+
+class DeltaPoseAdapter:
+    def __init__(
+        self,
+        position_scale: float = 1.0,
+        position_deadzone: float = 0.0,
+        orientation_deadzone: float = 0.0,
+    ) -> None:
+        self.position_scale = float(position_scale)
+        self.position_deadzone = float(position_deadzone)
+        self.orientation_deadzone = float(orientation_deadzone)
+        self.reset()
+
+    def reset(self) -> None:
+        self._cumulative_position = np.zeros(3, dtype=float)
+        self._cumulative_quaternion = np.array([0.0, 0.0, 0.0, 1.0], dtype=float)
+        self._last_sequence: int | None = None
+        self._cached_wrist_pose = WristPoseInput(
+            position=self._cumulative_position.tolist(),
+            quaternion=self._cumulative_quaternion.tolist(),
+            valid=True,
+        )
+
+    def to_wrist_data(self, command: DeltaPoseCommand, sequence: int) -> WristPoseInput:
+        if self._last_sequence != sequence:
+            delta_translation = np.array(command.translation, dtype=float) * self.position_scale
+            if np.linalg.norm(delta_translation) < self.position_deadzone:
+                delta_translation = np.zeros(3, dtype=float)
+
+            delta_quaternion = _normalize_quaternion_xyzw(np.array(command.quaternion, dtype=float))
+            rotation_angle = 2.0 * math.acos(np.clip(delta_quaternion[3], -1.0, 1.0))
+            if rotation_angle < self.orientation_deadzone:
+                delta_quaternion = np.array([0.0, 0.0, 0.0, 1.0], dtype=float)
+
+            self._cumulative_position = self._cumulative_position + delta_translation
+            self._cumulative_quaternion = _normalize_quaternion_xyzw(
+                _quaternion_multiply_xyzw(self._cumulative_quaternion, delta_quaternion)
+            )
+            self._cached_wrist_pose = WristPoseInput(
+                position=self._cumulative_position.tolist(),
+                quaternion=self._cumulative_quaternion.tolist(),
+                valid=True,
+            )
+            self._last_sequence = sequence
+
+        return self._cached_wrist_pose
 
 
 class FrankaFERSpaceMouseTeleoperator(Teleoperator):
@@ -27,9 +111,8 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
         self._robot_reference = None
         self._initialized = False
         self._is_connected = False
-        self._target_position: np.ndarray | None = None
-        self._target_rotation: np.ndarray | None = None
         self._last_action = None
+        self._delta_pose_adapter = DeltaPoseAdapter()
 
         from ..franka_fer_vr.arm_ik_processor import ArmIKProcessor
 
@@ -68,8 +151,8 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
         self._robot_reference = None
         self._initialized = False
         self._is_connected = False
-        self._target_position = None
-        self._target_rotation = None
+        self._delta_pose_adapter.reset()
+        self._reset_ik_state()
 
     def calibrate(self) -> None:
         return
@@ -84,47 +167,39 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
     def set_robot(self, robot):
         self._robot_reference = robot
 
-    def get_action(self) -> Dict[str, Any]:
+    def get_action(self) -> Tuple[Dict[str, Any], List[bool]]:
         if not self._is_connected:
             raise RuntimeError("FrankaFERSpaceMouseTeleoperator is not connected")
         if self._robot_reference is None:
-            return self._last_action or {f"joint_{i}.pos": 0.0 for i in range(7)}
+            return {f"joint_{i}.pos": 0.0 for i in range(7)}
 
         current_obs = self._robot_reference.get_observation()
         current_joints = [current_obs[f"joint_{i}.pos"] for i in range(7)]
 
         if not self._initialized and not self._initialize_ik_solver(current_obs, current_joints):
-            return self._last_action or {f"joint_{i}.pos": float(current_joints[i]) for i in range(7)}
+            return {f"joint_{i}.pos": float(current_joints[i]) for i in range(7)}
 
         state = self._reader.get_state()
         if state is None:
             return {f"joint_{i}.pos": float(current_joints[i]) for i in range(7)}
 
         translation = self._apply_deadzone(
-            np.array([state["y"], -state["x"], state["z"]], dtype=float)
-        ) * self.config.translation_scale
+            np.array([state["x"], state["z"], state["y"]], dtype=float)
+        ) * 0.2 * 0.02
         rotation = self._apply_deadzone(
-            np.array([state["pitch"], -state["roll"], state["yaw"]], dtype=float)
-        ) * self.config.rotation_scale
-
-        self._target_position = self._target_position + translation
-        self._target_rotation = self._euler_to_matrix(rotation) @ self._target_rotation
+            np.array([state["pitch"], state["yaw"], -state["roll"]], dtype=float)
+        ) * 0.5 * 0.02
 
         try:
-            ik_result = self.arm_ik_processor.ik_solver.solve_q7_optimized(
-                target_position=self._target_position.tolist(),
-                target_orientation=self._target_rotation.flatten().tolist(),
-                current_pose=current_joints,
-                q7_min=self.config.q7_min,
-                q7_max=self.config.q7_max,
-                tolerance=1e-6,
-                max_iterations=100,
+            command = DeltaPoseCommand(
+                translation=translation.tolist(),
+                quaternion=self._euler_xyz_to_quaternion_xyzw(rotation).tolist(),
             )
-            if ik_result.success:
-                target_joints = list(ik_result.joint_angles)
-                action = {f"joint_{i}.pos": float(target_joints[i]) for i in range(7)}
-                self._last_action = action
-                return action
+            wrist_data = self._delta_pose_adapter.to_wrist_data(command, int(state.get("sequence", 0)))
+            arm_action = self.arm_ik_processor.process_wrist_data(wrist_data, current_joints)
+            action = {f"joint_{i}.pos": float(arm_action[f"arm_joint_{i}.pos"]) for i in range(7)}
+            self._last_action = action
+            return action
         except Exception as exc:
             logger.error("SpaceMouse IK failed: %s", exc)
 
@@ -152,10 +227,6 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
             )
             if not success:
                 return False
-
-            ee_pose_matrix = np.array(ee_pose, dtype=float).reshape(4, 4)
-            self._target_position = ee_pose_matrix[:3, 3].copy()
-            self._target_rotation = ee_pose_matrix[:3, :3].copy()
             self._initialized = True
             return True
         except Exception as exc:
@@ -168,13 +239,25 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
         return masked
 
     @staticmethod
-    def _euler_to_matrix(euler_xyz: np.ndarray) -> np.ndarray:
+    def _euler_xyz_to_quaternion_xyzw(euler_xyz: np.ndarray) -> np.ndarray:
         rx, ry, rz = euler_xyz
-        cx, sx = np.cos(rx), np.sin(rx)
-        cy, sy = np.cos(ry), np.sin(ry)
-        cz, sz = np.cos(rz), np.sin(rz)
+        hx, hy, hz = rx * 0.5, ry * 0.5, rz * 0.5
+        cx, sx = np.cos(hx), np.sin(hx)
+        cy, sy = np.cos(hy), np.sin(hy)
+        cz, sz = np.cos(hz), np.sin(hz)
+        return _normalize_quaternion_xyzw(
+            np.array(
+                [
+                    sx * cy * cz - cx * sy * sz,
+                    cx * sy * cz + sx * cy * sz,
+                    cx * cy * sz - sx * sy * cz,
+                    cx * cy * cz + sx * sy * sz,
+                ],
+                dtype=float,
+            )
+        )
 
-        rot_x = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
-        rot_y = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
-        rot_z = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
-        return rot_z @ rot_y @ rot_x
+    def _reset_ik_state(self) -> None:
+        self.arm_ik_processor.initial_vr_pose = None
+        self.arm_ik_processor.vr_initialized = False
+        self.arm_ik_processor.last_target_joints = None

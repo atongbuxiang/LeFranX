@@ -13,6 +13,7 @@ class SpaceMouseStateReader:
         self._stop_event = threading.Event()
         self._thread = None
         self._state = None
+        self._sequence = 0
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -44,6 +45,8 @@ class SpaceMouseStateReader:
                     if state is not None:
                         parsed = self._normalize_state(state)
                         with self._lock:
+                            self._sequence += 1
+                            parsed["sequence"] = self._sequence
                             self._state = parsed
                     time.sleep(self.poll_interval_s)
         except Exception as exc:
