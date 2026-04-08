@@ -25,6 +25,7 @@ class FrankaFERGripper(Robot):
         self.gripper = Gripper(config.gripper_config)
         self.cameras = make_cameras_from_configs(config.cameras)
         self._is_connected = False
+        self._last_sent_gripper_pos: float | None = None
 
     @cached_property
     def observation_features(self) -> Dict[str, type | tuple]:
@@ -159,8 +160,10 @@ class FrankaFERGripper(Robot):
                     performed_action[f"arm_{key}"] = value
 
             if gripper_action:
-                gripper_result = self.gripper.send_action(gripper_action)
-                performed_action.update(gripper_result)
+                if gripper_action["gripper.pos"] != self._last_sent_gripper_pos:
+                    gripper_result = self.gripper.send_action(gripper_action)
+                performed_action.update(gripper_action)
+                self._last_sent_gripper_pos = gripper_action["gripper.pos"]
         except Exception as exc:
             logger.error("Failed to send composite action: %s", exc)
             if self.config.emergency_stop_both:

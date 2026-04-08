@@ -11,3 +11,6 @@
 # Pybind11
 *.egg-info
 *.so
+
+/data/
+*/data

@@ -26,7 +26,6 @@ class FrankaFERGripperSpaceMouseTeleoperator(Teleoperator):
         self._is_connected = False
         self._robot_reference = None
         self._gripper_pos = float(np.clip(config.initial_gripper_pos, 0.0, 1.0))
-        self._last_sent_gripper_pos: float | None = None
 
     @property
     def action_features(self) -> dict[str, type]:
@@ -56,7 +55,6 @@ class FrankaFERGripperSpaceMouseTeleoperator(Teleoperator):
         self._reader.stop()
         self._robot_reference = None
         self._is_connected = False
-        self._last_sent_gripper_pos = None
 
     def calibrate(self) -> None:
         return
@@ -81,7 +79,6 @@ class FrankaFERGripperSpaceMouseTeleoperator(Teleoperator):
                     self._gripper_pos = float(obs["gripper.pos"])
             except Exception:
                 pass
-        self._last_sent_gripper_pos = None
 
     def get_action(self) -> Dict[str, Any]:
         if not self.is_connected:
@@ -97,10 +94,9 @@ class FrankaFERGripperSpaceMouseTeleoperator(Teleoperator):
             open_pressed = self._button_pressed(buttons, self.config.open_button_index)
             if close_pressed != open_pressed:
                 self._gripper_pos = 0.0 if close_pressed else 1.0
-
-        if self._gripper_pos != self._last_sent_gripper_pos:
+            
             action["gripper.pos"] = self._gripper_pos
-            self._last_sent_gripper_pos = self._gripper_pos
+            
         return action
 
     def reset_initial_pose(self) -> bool:

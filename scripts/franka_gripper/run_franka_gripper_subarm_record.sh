@@ -3,8 +3,6 @@ set -euo pipefail
 
 python scripts/franka_gripper/franka_gripper_subarm_record.py \
   --dataset-name franka_gripper_subarm \
-  --num-episodes 1 \
-  --episode-time 60 \
   --task "Teleoperate Franka + gripper with subarm." \
   --fps 30 \
   --robot-ip 172.10.0.1 \
