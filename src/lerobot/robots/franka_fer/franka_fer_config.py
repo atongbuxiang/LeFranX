@@ -18,8 +18,8 @@ class FrankaFERConfig(RobotConfig):
     server_port: int = 5000
 
     # Home position for robot reset
-    # home_position: list[float] = field(default_factory=lambda: [0, -0.785, 0, -2.356, 0, 1.571, 0]) # modified home pose for xhand
-    home_position: list[float] = field(default_factory=lambda: [0.215, -1.256, -0.2, -2.7, -0.34, 2.3, 0.075]) # modified home pose for xhand
+    home_position: list[float] = field(default_factory=lambda: [0, -0.785, 0, -2.356, 0, 1.571, 0]) # modified home pose for xhand
+    # home_position: list[float] = field(default_factory=lambda: [0.215, -1.256, -0.2, -2.7, -0.34, 2.3, 0.075]) # modified home pose for xhand
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     max_relative_target: float | None = None

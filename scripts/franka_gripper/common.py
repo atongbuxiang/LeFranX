@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
-DEFAULT_HOME = [0, -0.785, 0, -2.356, 0, 1.571, -0.9]
+DEFAULT_HOME = [0, -0.785, 0, -2.356, 0, 1.571, 0]
 
 
 def parse_camera_specs(camera_specs: Iterable[str] | None) -> dict[str, str]:

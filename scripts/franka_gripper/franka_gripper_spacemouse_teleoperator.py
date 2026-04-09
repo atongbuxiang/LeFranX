@@ -42,6 +42,11 @@ def main():
         teleop.connect(calibrate=False)
         teleop.set_robot(robot)
 
+        print("Homing robot to neutral position...")
+        robot.reset_to_home()
+        time.sleep(2.0)
+        print("Robot homed")
+
         dt = 1.0 / args.fps
         while True:
             loop_start = time.perf_counter()

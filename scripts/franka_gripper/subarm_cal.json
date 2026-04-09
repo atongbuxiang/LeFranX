@@ -1,0 +1,28 @@
+{
+  "arm": {
+    "joint_scale": [
+      -1.0,
+      1.0,
+      -1.0,
+      -1.0,
+      -1.0,
+      1.0,
+      -1.0
+    ],
+    "joint_offset_rad": [
+      0.02378250848871394,
+      -0.02702843913389119,
+      0.09743156703440872,
+      -1.311103981882955,
+      -0.7602730939456618,
+      1.7735349110006606,
+      -0.3590391604102621
+    ],
+    "note": "franka_cmd_rad[i] = joint_scale[i] * leader_rad[i] + joint_offset_rad[i]. leader_rad: from ° via radians(°) when SoFranka use_degrees; else raw [-100,100] (must match runtime). offset_rad[i] = franka_rad[i] - joint_scale[i] * leader_rad[i]."
+  },
+  "gripper": {
+    "gripper_raw_at_closed": 37.32342007434944,
+    "gripper_raw_at_open": 79.92565055762083,
+    "note": "gripper.pos = clip((raw - closed) / (open - closed), 0, 1)"
+  }
+}

@@ -1,5 +1,7 @@
 from typing import Any
 
+import numpy as np
+
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.sofranka import SoFranka, SoFrankaConfig
 
@@ -58,7 +60,19 @@ class FrankaFERGripperSubarmTeleoperator(Teleoperator):
         return
 
     def get_action(self) -> dict[str, float]:
+        arm_action = self.arm_teleop.get_action()
+        action = {f"arm_joint_{i}.pos": arm_action[f"joint_{i}.pos"] for i in range(7)}
+
         raw_action = self.leader.get_action()
-        action = {f"arm_joint_{i}.pos": float(raw_action[f"joint_{i + 1}.pos"]) for i in range(7)}
-        action["gripper.pos"] = float(raw_action["gripper.pos"]) / 100.0
+        g_raw = float(raw_action["gripper.pos"])
+        c = self.config.gripper_raw_at_closed
+        o = self.config.gripper_raw_at_open
+        if abs(o - c) < 1e-9:
+            g01 = g_raw / 100.0
+        elif c <= o:
+            g01 = (g_raw - c) / (o - c)
+        else:
+            # closed raw > open raw: map closed→0, open→1 with reversed span
+            g01 = (c - g_raw) / (c - o)
+        action["gripper.pos"] = float(np.clip(g01, 0.0, 1.0))
         return action

@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument("dataset_path")
     parser.add_argument("--episode", type=int, default=0)
     parser.add_argument("--speed", type=float, default=1.0)
-    parser.add_argument("--robot-ip", default="192.168.18.1")
+    parser.add_argument("--robot-ip", default="172.16.0.1")
     parser.add_argument("--robot-port", type=int, default=5000)
     parser.add_argument("--gripper-port", default="/dev/ttyACM1")
     parser.add_argument("--gripper-baud", type=int, default=115200)

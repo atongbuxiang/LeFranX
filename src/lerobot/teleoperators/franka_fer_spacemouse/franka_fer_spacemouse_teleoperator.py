@@ -1,7 +1,7 @@
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 
 import numpy as np
 
@@ -167,14 +167,22 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
     def set_robot(self, robot):
         self._robot_reference = robot
 
-    def get_action(self) -> Tuple[Dict[str, Any], List[bool]]:
+    def get_action(self) -> Dict[str, Any]:
         if not self._is_connected:
             raise RuntimeError("FrankaFERSpaceMouseTeleoperator is not connected")
         if self._robot_reference is None:
-            return {f"joint_{i}.pos": 0.0 for i in range(7)}
+            return self._fallback_action()
 
-        current_obs = self._robot_reference.get_observation()
-        current_joints = [current_obs[f"joint_{i}.pos"] for i in range(7)]
+        try:
+            current_obs = self._robot_reference.get_observation()
+        except Exception as exc:
+            logger.error("Failed to get robot observation: %s", exc)
+            return self._fallback_action()
+
+        current_joints = self._extract_joint_positions(current_obs)
+        if current_joints is None:
+            logger.warning("Incomplete joint observation from robot: %s", sorted(current_obs.keys()))
+            return self._fallback_action()
 
         if not self._initialized and not self._initialize_ik_solver(current_obs, current_joints):
             return {f"joint_{i}.pos": float(current_joints[i]) for i in range(7)}
@@ -198,6 +206,7 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
             wrist_data = self._delta_pose_adapter.to_wrist_data(command, int(state.get("sequence", 0)))
             arm_action = self.arm_ik_processor.process_wrist_data(wrist_data, current_joints)
             action = {f"joint_{i}.pos": float(arm_action[f"arm_joint_{i}.pos"]) for i in range(7)}
+            print(action)
             self._last_action = action
             return action
         except Exception as exc:
@@ -208,13 +217,24 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
     def reset_initial_pose(self) -> bool:
         if not self._is_connected or self._robot_reference is None:
             return False
-        current_obs = self._robot_reference.get_observation()
-        current_joints = [current_obs[f"joint_{i}.pos"] for i in range(7)]
+        try:
+            current_obs = self._robot_reference.get_observation()
+        except Exception as exc:
+            logger.error("Failed to get robot observation for pose reset: %s", exc)
+            return False
+
+        current_joints = self._extract_joint_positions(current_obs)
+        if current_joints is None:
+            logger.warning("Cannot reset pose without complete joint observation")
+            return False
         return self._initialize_ik_solver(current_obs, current_joints)
 
     def _initialize_ik_solver(self, current_obs: dict[str, Any], current_joints: list[float]) -> bool:
         try:
-            ee_pose = [current_obs[f"ee_pose.{i:02d}"] for i in range(16)]
+            ee_pose = self._extract_ee_pose(current_obs)
+            if ee_pose is None:
+                logger.warning("Incomplete end-effector pose observation from robot")
+                return False
             success = self.arm_ik_processor.setup(
                 neutral_pose=current_joints,
                 initial_robot_pose=ee_pose,
@@ -237,6 +257,31 @@ class FrankaFERSpaceMouseTeleoperator(Teleoperator):
         masked = values.copy()
         masked[np.abs(masked) < self.config.deadzone] = 0.0
         return masked
+
+    def _fallback_action(self) -> Dict[str, Any]:
+        return self._last_action or {f"joint_{i}.pos": 0.0 for i in range(7)}
+
+    @staticmethod
+    def _extract_joint_positions(current_obs: dict[str, Any]) -> list[float] | None:
+        joint_keys = [f"joint_{i}.pos" for i in range(7)]
+        arm_joint_keys = [f"arm_joint_{i}.pos" for i in range(7)]
+
+        if all(key in current_obs for key in joint_keys):
+            return [float(current_obs[key]) for key in joint_keys]
+        if all(key in current_obs for key in arm_joint_keys):
+            return [float(current_obs[key]) for key in arm_joint_keys]
+        return None
+
+    @staticmethod
+    def _extract_ee_pose(current_obs: dict[str, Any]) -> list[float] | None:
+        ee_pose_keys = [f"ee_pose.{i:02d}" for i in range(16)]
+        arm_ee_pose_keys = [f"arm_ee_pose.{i:02d}" for i in range(16)]
+
+        if all(key in current_obs for key in ee_pose_keys):
+            return [float(current_obs[key]) for key in ee_pose_keys]
+        if all(key in current_obs for key in arm_ee_pose_keys):
+            return [float(current_obs[key]) for key in arm_ee_pose_keys]
+        return None
 
     @staticmethod
     def _euler_xyz_to_quaternion_xyzw(euler_xyz: np.ndarray) -> np.ndarray:

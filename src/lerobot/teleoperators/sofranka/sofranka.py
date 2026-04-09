@@ -118,7 +118,9 @@ class SoFranka(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         start = time.perf_counter()
-        action = self.bus.sync_read("Present_Position")
+        # Without calibration, normalized reads raise; raw encoder values still work.
+        normalize = bool(self.bus.calibration)
+        action = self.bus.sync_read("Present_Position", normalize=normalize)
         action = {f"{motor}.pos": val for motor, val in action.items()}
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} 读取耗时: {dt_ms:.1f}ms")
@@ -130,5 +132,8 @@ class SoFranka(Teleoperator):
     def disconnect(self) -> None:
         if not self.is_connected:
             raise RuntimeError(f"{self} is not connected.")
-        self.bus.disconnect()
+        try:
+            self.bus.disconnect()
+        except OSError as exc:
+            logger.warning("%s bus disconnect failed (port may already be dead): %s", self, exc)
         logger.info(f"{self} disconnected.")

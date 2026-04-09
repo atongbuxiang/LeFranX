@@ -248,6 +248,7 @@ class FrankaFER(Robot):
             joint_positions.append(action[key])
         
         target_positions = np.array(joint_positions)
+        #print(target_positions)
         
         # Apply safety limits if configured
         if self.config.max_relative_target is not None:

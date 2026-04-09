@@ -12,3 +12,8 @@ class FrankaFERGripperSubarmTeleoperatorConfig(TeleoperatorConfig):
     arm_config: FrankaFERSubarmTeleoperatorConfig = field(
         default_factory=lambda: FrankaFERSubarmTeleoperatorConfig(port="/dev/ttyACM0")
     )
+
+    # Leader gripper raw (same units as SoFranka `gripper.pos` after get_action) -> [0, 1]
+    # Calibrate by moving gripper fully closed vs fully open once and recording raw values.
+    gripper_raw_at_closed: float = 0.0
+    gripper_raw_at_open: float = 100.0

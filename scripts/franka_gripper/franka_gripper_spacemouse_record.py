@@ -45,7 +45,7 @@ def parse_args():
         help="Repeatable RealSense camera config in the form 'camera_name=realsense_id'",
     )
     parser.add_argument("--camera-name", default="realsense")
-    parser.add_argument("--realsense-id", default="")
+    parser.add_argument("--realsense-id", default="241122305042")
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true", default=False)

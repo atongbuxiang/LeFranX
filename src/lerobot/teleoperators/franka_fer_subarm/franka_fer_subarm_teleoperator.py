@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 from lerobot.teleoperators.teleoperator import Teleoperator
@@ -54,7 +55,15 @@ class FrankaFERSubarmTeleoperator(Teleoperator):
 
     def get_action(self) -> dict[str, float]:
         raw_action = self.leader.get_action()
+        scale = self.config.joint_scale
+        offset = self.config.joint_offset_rad
+
+        def leader_scalar_for_franka(raw: float) -> float:
+            # With use_degrees, bus reports °; joint_offset_rad is paired with leader in rad.
+            return math.radians(raw) if self.config.use_degrees else raw
+
         return {
-            f"joint_{i}.pos": float(raw_action[f"joint_{i + 1}.pos"])
+            f"joint_{i}.pos": float(scale[i]) * leader_scalar_for_franka(float(raw_action[f"joint_{i + 1}.pos"]))
+            + float(offset[i])
             for i in range(7)
         }
