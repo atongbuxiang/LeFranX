@@ -1,16 +1,14 @@
 {
     "codebase_version": "v2.1",
     "robot_type": "franka_fer_gripper",
-    "total_episodes": 2,
-    "total_frames": 1366,
-    "total_tasks": 1,
-    "total_videos": 2,
-    "total_chunks": 1,
+    "total_episodes": 0,
+    "total_frames": 0,
+    "total_tasks": 0,
+    "total_videos": 0,
+    "total_chunks": 0,
     "chunks_size": 1000,
     "fps": 30,
-    "splits": {
-        "train": "0:2"
-    },
+    "splits": {},
     "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
     "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
     "features": {
@@ -69,7 +67,7 @@
                 "gripper.pos"
             ]
         },
-        "observation.images.realsense": {
+        "observation.images.realsense_wrist": {
             "dtype": "video",
             "shape": [
                 480,
@@ -80,17 +78,20 @@
                 "height",
                 "width",
                 "channels"
+            ]
+        },
+        "observation.images.realsense_topdown": {
+            "dtype": "video",
+            "shape": [
+                480,
+                640,
+                3
             ],
-            "info": {
-                "video.height": 480,
-                "video.width": 640,
-                "video.codec": "av1",
-                "video.pix_fmt": "yuv420p",
-                "video.is_depth_map": false,
-                "video.fps": 30,
-                "video.channels": 3,
-                "has_audio": false
-            }
+            "names": [
+                "height",
+                "width",
+                "channels"
+            ]
         },
         "timestamp": {
             "dtype": "float32",

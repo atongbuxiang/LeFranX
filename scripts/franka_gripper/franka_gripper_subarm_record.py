@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+
+'''
+  r: start/stop writing frames into the current buffer
+  n: save current buffer and move to the next episode
+  x: clear current buffer
+  Esc: stop recording session
+  Live preview: enabled (OpenCV window)
+'''
 """Record Franka + gripper demos with subarm (SoFranka) teleop; uses subarm_cal.json like franka_gripper_subarm_teleoperator.py."""
 
 import argparse
@@ -26,7 +34,12 @@ from lerobot.utils.visualization_utils import _init_rerun
 
 DEFAULT_FPS = 30
 DEFAULT_TASK_DESCRIPTION = "Teleoperate Franka + gripper with subarm."
-DEFAULT_DATASET_NAME = "franka_gripper_subarm"
+DEFAULT_DATASET_NAME = "pick_banana"
+DEFAULT_DATASET_ROOT = Path("/mnt/data")
+DEFAULT_CAMERAS = {
+    "realsense_wrist": "241122305042",
+    "realsense_topdown": "241122300571",
+}
 
 init_logging()
 logger = logging.getLogger(__name__)
@@ -40,12 +53,17 @@ def parse_args():
     parser.add_argument(
         "--dataset-root",
         type=Path,
-        default=None,
-        help="Root directory to store dataset folder. Default: <current working dir>/data",
+        default=DEFAULT_DATASET_ROOT,
+        help=f"Root directory to store dataset folder. Default: {DEFAULT_DATASET_ROOT}",
     )
     parser.add_argument("--task", type=str, default=DEFAULT_TASK_DESCRIPTION)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing dataset directory when not resuming.",
+    )
     parser.add_argument("--robot-ip", default="172.16.0.1")
     parser.add_argument("--robot-port", type=int, default=5000)
     parser.add_argument("--gripper-port", default="/dev/ttyUSB0")
@@ -72,10 +90,13 @@ def parse_args():
         "--camera",
         action="append",
         default=[],
-        help="Repeatable RealSense camera config in the form 'camera_name=realsense_id'",
+        help=(
+            "Repeatable RealSense camera config in the form 'camera_name=realsense_id'. "
+            "When omitted, defaults to realsense_wrist=241122305042 and realsense_topdown=241122300571."
+        ),
     )
-    parser.add_argument("--camera-name", default="realsense")
-    parser.add_argument("--realsense-id", default="241122305042")
+    parser.add_argument("--camera-name", default="realsense_wrist")
+    parser.add_argument("--realsense-id", default="")
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true", default=False)
@@ -225,7 +246,15 @@ def home_robot_and_gripper(robot):
     time.sleep(1.0)
 
 
+def ensure_episode_buffer(dataset) -> None:
+    """Initialize a writable episode buffer when loading an existing dataset."""
+    if getattr(dataset, "episode_buffer", None) is None:
+        dataset.episode_buffer = dataset.create_episode_buffer()
+
+
 def handle_control_events(dataset, events, dataset_path: Path):
+    ensure_episode_buffer(dataset)
+
     if events["toggle_recording"]:
         events["toggle_recording"] = False
         events["recording"] = not events["recording"]
@@ -320,15 +349,8 @@ def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task,
 def main():
     args = parse_args()
     if not args.no_camera and not args.camera and not args.realsense_id:
-        auto_serial = detect_first_realsense_serial()
-        if auto_serial:
-            args.realsense_id = auto_serial
-            logger.info("Auto-detected RealSense serial: %s (camera name: %s)", auto_serial, args.camera_name)
-        else:
-            raise ValueError(
-                "Provide at least one camera via '--camera name=id' or '--realsense-id', "
-                "or pass --no-camera to record without images (state/action only)."
-            )
+        args.camera = [f"{name}={serial}" for name, serial in DEFAULT_CAMERAS.items()]
+        logger.info("Using default RealSense cameras: %s", args.camera)
 
     cal_path = args.calibration_json
     logger.info("Setting up Franka gripper subarm recording test...")
@@ -373,11 +395,16 @@ def main():
         dataset = LeRobotDataset(dataset_path)
     else:
         logger.info("Creating new dataset at %s", dataset_path)
-        if dataset_path.exists() and not args.resume:
-            logger.warning("Removing existing dataset directory: %s", dataset_path)
-            shutil.rmtree(dataset_path)
-        elif dataset_path.exists() and args.resume:
+        if dataset_path.exists() and args.resume:
             raise ValueError(f"Cannot resume from invalid dataset: {dataset_path}")
+        if dataset_path.exists() and args.overwrite:
+            logger.warning("Removing existing dataset directory (--overwrite): %s", dataset_path)
+            shutil.rmtree(dataset_path)
+        elif dataset_path.exists() and not args.overwrite:
+            raise ValueError(
+                f"Dataset already exists: {dataset_path}. "
+                "Use --resume to append episodes, or --overwrite to recreate from scratch."
+            )
 
         dataset = LeRobotDataset.create(
             repo_id=str(dataset_path),
@@ -387,6 +414,7 @@ def main():
             use_videos=not args.no_camera,
             image_writer_threads=0 if args.no_camera else 4,
         )
+    ensure_episode_buffer(dataset)
 
     listener = None
     try:
