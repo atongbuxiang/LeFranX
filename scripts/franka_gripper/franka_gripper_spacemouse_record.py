@@ -6,10 +6,16 @@ import shutil
 import time
 from pathlib import Path
 
-from common import build_robot_config
+from common import (
+    assert_dataset_features_compatible,
+    build_recording_dataset_features,
+    build_recording_observation_frame,
+    build_robot_config,
+    ensure_episode_buffer,
+)
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import build_dataset_frame, hw_to_dataset_features
+from lerobot.datasets.utils import build_dataset_frame
 from lerobot.robots.franka_fer_gripper import FrankaFERGripper
 from lerobot.teleoperators.franka_fer_gripper_spacemouse import (
     FrankaFERGripperSpaceMouseTeleoperator,
@@ -140,6 +146,8 @@ def home_robot_and_gripper(robot):
 
 
 def handle_control_events(dataset, events):
+    ensure_episode_buffer(dataset)
+
     if events["toggle_recording"]:
         events["toggle_recording"] = False
         events["recording"] = not events["recording"]
@@ -185,7 +193,7 @@ def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task)
         if events["recording"]:
             frame = {}
             frame.update(build_dataset_frame(dataset_features, performed_action, prefix="action"))
-            frame.update(build_dataset_frame(dataset_features, observation, prefix="observation"))
+            frame.update(build_recording_observation_frame(dataset_features, observation))
             dataset.add_frame(frame, task=task, timestamp=dataset.episode_buffer["size"] / fps)
 
         elapsed = time.perf_counter() - loop_start
@@ -207,12 +215,11 @@ def main():
     teleop = FrankaFERGripperSpaceMouseTeleoperator(FrankaFERGripperSpaceMouseTeleoperatorConfig())
 
     logger.info("Setting up dataset...")
-    action_features = hw_to_dataset_features(robot.action_features, "action")
-    obs_features = hw_to_dataset_features(robot.observation_features, "observation")
-    dataset_features = {**action_features, **obs_features}
+    dataset_features = build_recording_dataset_features(robot, use_videos=True)
 
     logger.info("Robot action features: %s", list(robot.action_features.keys()))
     logger.info("Robot observation features: %s", list(robot.observation_features.keys()))
+    logger.info("Dataset features: %s", list(dataset_features.keys()))
 
     dataset_path = Path.cwd() / "data" / args.dataset_name
     dataset_path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +234,7 @@ def main():
     if existing_episodes > 0:
         logger.info("Loading existing dataset from %s with %s episodes", dataset_path, existing_episodes)
         dataset = LeRobotDataset(dataset_path)
+        assert_dataset_features_compatible(dataset, dataset_features)
     else:
         logger.info("Creating new dataset at %s", dataset_path)
         if dataset_path.exists() and not args.resume:
@@ -243,6 +251,7 @@ def main():
             use_videos=True,
             image_writer_threads=4,
         )
+    ensure_episode_buffer(dataset)
 
     listener = None
     try:
