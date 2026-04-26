@@ -12,10 +12,8 @@
 import argparse
 import json
 import logging
-import queue
 import shutil
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -28,14 +26,8 @@ from common import (
     ensure_episode_buffer,
 )
 
-from lerobot.datasets.compute_stats import compute_episode_stats
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.utils import (
-    build_dataset_frame,
-    check_timestamps_sync,
-    get_episode_data_index,
-    validate_episode_buffer,
-)
+from lerobot.datasets.utils import build_dataset_frame
 from lerobot.robots.franka_fer_gripper import FrankaFERGripper
 from lerobot.teleoperators.franka_fer_gripper_subarm import (
     FrankaFERGripperSubarmTeleoperator,
@@ -46,7 +38,9 @@ from lerobot.utils.control_utils import is_headless
 from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
-DEFAULT_FPS = 30
+DEFAULT_FPS = 15
+# RealSense 在固定分辨率下只支持部分 FPS（如 640x480 常见为 6/15/30/60），与数据集录制频率解耦。
+DEFAULT_CAMERA_FPS = 30
 DEFAULT_TASK_DESCRIPTION = "Teleoperate Franka + gripper with subarm."
 DEFAULT_DATASET_NAME = "pick_banana"
 DEFAULT_DATASET_ROOT = Path("/mnt/data")
@@ -72,6 +66,15 @@ def parse_args():
     )
     parser.add_argument("--task", type=str, default=DEFAULT_TASK_DESCRIPTION)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    parser.add_argument(
+        "--camera-fps",
+        type=int,
+        default=DEFAULT_CAMERA_FPS,
+        help=(
+            "RealSense 彩色流 FPS（须为当前分辨率下设备支持的档位，如 640x480 常用 15 或 30）。"
+            "与 --fps（数据集时间轴与主循环）独立；若设为与 --fps 相同且硬件不支持会无法打开相机。"
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--overwrite",
@@ -260,173 +263,8 @@ def home_robot_and_gripper(robot):
     time.sleep(1.0)
 
 
-def clear_current_episode_buffer(dataset) -> None:
-    episode_index = dataset.episode_buffer["episode_index"]
-
-    if dataset.image_writer is not None:
-        for cam_key in dataset.meta.camera_keys:
-            img_dir = dataset._get_image_file_path(
-                episode_index=episode_index, image_key=cam_key, frame_index=0
-            ).parent
-            if img_dir.is_dir():
-                shutil.rmtree(img_dir)
-
-    dataset.episode_buffer = dataset.create_episode_buffer(episode_index=episode_index)
-
-
-def wait_for_episode_images(dataset, episode_buffer: dict, timeout_s: float = 120.0) -> None:
-    if dataset.image_writer is None:
-        return
-
-    image_paths = []
-    for cam_key in dataset.meta.camera_keys:
-        image_paths.extend(Path(path) for path in episode_buffer.get(cam_key, []))
-
-    if not image_paths:
-        return
-
-    deadline = time.monotonic() + timeout_s
-    pending = set(image_paths)
-    while pending:
-        pending = {path for path in pending if not path.exists()}
-        if not pending:
-            return
-        if time.monotonic() >= deadline:
-            missing = ", ".join(str(path) for path in list(sorted(pending))[:3])
-            raise TimeoutError(f"Timed out waiting for episode images to be written. Missing: {missing}")
-        time.sleep(0.01)
-
-
-def save_episode_buffer(dataset, episode_buffer: dict) -> int:
-    validate_episode_buffer(episode_buffer, dataset.meta.total_episodes, dataset.features)
-
-    episode_length = episode_buffer.pop("size")
-    tasks = episode_buffer.pop("task")
-    episode_tasks = list(set(tasks))
-    episode_index = episode_buffer["episode_index"]
-
-    episode_buffer["index"] = np.arange(dataset.meta.total_frames, dataset.meta.total_frames + episode_length)
-    episode_buffer["episode_index"] = np.full((episode_length,), episode_index)
-
-    for task_name in episode_tasks:
-        if dataset.meta.get_task_index(task_name) is None:
-            dataset.meta.add_task(task_name)
-
-    episode_buffer["task_index"] = np.array([dataset.meta.get_task_index(task_name) for task_name in tasks])
-
-    for key, ft in dataset.features.items():
-        if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
-            continue
-        episode_buffer[key] = np.stack(episode_buffer[key])
-
-    dataset._save_episode_table(episode_buffer, episode_index)
-    ep_stats = compute_episode_stats(episode_buffer, dataset.features)
-
-    has_video_keys = len(dataset.meta.video_keys) > 0
-    use_batched_encoding = dataset.batch_encoding_size > 1
-
-    if has_video_keys and not use_batched_encoding:
-        dataset.encode_episode_videos(episode_index)
-
-    dataset.meta.save_episode(episode_index, episode_length, episode_tasks, ep_stats)
-
-    if has_video_keys and use_batched_encoding:
-        dataset.episodes_since_last_encoding += 1
-        if dataset.episodes_since_last_encoding == dataset.batch_encoding_size:
-            start_ep = dataset.num_episodes - dataset.batch_encoding_size
-            end_ep = dataset.num_episodes
-            logger.info(
-                "Batch encoding %s videos for episodes %s to %s",
-                dataset.batch_encoding_size,
-                start_ep,
-                end_ep - 1,
-            )
-            dataset.batch_encode_videos(start_ep, end_ep)
-            dataset.episodes_since_last_encoding = 0
-
-    ep_data_index = get_episode_data_index(dataset.meta.episodes, [episode_index])
-    ep_data_index_np = {k: t.numpy() for k, t in ep_data_index.items()}
-    check_timestamps_sync(
-        episode_buffer["timestamp"],
-        episode_buffer["episode_index"],
-        ep_data_index_np,
-        dataset.fps,
-        dataset.tolerance_s,
-    )
-
-    parquet_files = list(dataset.root.rglob("*.parquet"))
-    assert len(parquet_files) == dataset.num_episodes
-    video_files = list(dataset.root.rglob("*.mp4"))
-    assert len(video_files) == (dataset.num_episodes - dataset.episodes_since_last_encoding) * len(
-        dataset.meta.video_keys
-    )
-
-    return episode_index
-
-
-class AsyncEpisodeSaver:
-    def __init__(self, dataset, dataset_path: Path):
-        self.dataset = dataset
-        self.dataset_path = dataset_path
-        self._queue: queue.Queue[dict | None] = queue.Queue()
-        self._pending = 0
-        self._lock = threading.Lock()
-        self._failure: Exception | None = None
-        self._thread = threading.Thread(target=self._worker_loop, name="episode-saver", daemon=True)
-        self._thread.start()
-
-    def _worker_loop(self):
-        while True:
-            episode_buffer = self._queue.get()
-            if episode_buffer is None:
-                self._queue.task_done()
-                return
-
-            try:
-                wait_for_episode_images(self.dataset, episode_buffer)
-                episode_index = save_episode_buffer(self.dataset, episode_buffer)
-                logger.info("Dataset saved under: %s", self.dataset_path.resolve())
-                logger.info("Saved episode %s in background thread.", episode_index + 1)
-            except Exception as exc:
-                logger.exception("Failed to save episode in background thread.")
-                with self._lock:
-                    if self._failure is None:
-                        self._failure = exc
-            finally:
-                with self._lock:
-                    self._pending -= 1
-                self._queue.task_done()
-
-    def enqueue(self, episode_buffer: dict) -> int:
-        episode_index = int(episode_buffer["episode_index"])
-        with self._lock:
-            if self._failure is not None:
-                raise RuntimeError("Background episode saver has failed.") from self._failure
-            self._pending += 1
-        self._queue.put(episode_buffer)
-        return episode_index
-
-    def pending_count(self) -> int:
-        with self._lock:
-            return self._pending
-
-    def raise_if_failed(self) -> None:
-        with self._lock:
-            failure = self._failure
-        if failure is not None:
-            raise RuntimeError("Background episode saver has failed.") from failure
-
-    def close(self) -> None:
-        self._queue.join()
-        self.raise_if_failed()
-        self._queue.put(None)
-        self._thread.join()
-        self.raise_if_failed()
-
-
-def handle_control_events(dataset, events, dataset_path: Path, episode_saver: AsyncEpisodeSaver, state: dict):
+def handle_control_events(dataset, events, dataset_path: Path):
     ensure_episode_buffer(dataset)
-    episode_saver.raise_if_failed()
 
     if events["toggle_recording"]:
         events["toggle_recording"] = False
@@ -443,7 +281,7 @@ def handle_control_events(dataset, events, dataset_path: Path, episode_saver: As
         if dataset.episode_buffer["size"] == 0:
             log_say("Buffer is already empty.")
         else:
-            clear_current_episode_buffer(dataset)
+            dataset.clear_episode_buffer()
             log_say("Current buffer cleared.")
 
     if events["save_episode"]:
@@ -455,16 +293,9 @@ def handle_control_events(dataset, events, dataset_path: Path, episode_saver: As
             log_say("Buffer is empty, nothing to save.")
             return
 
-        episode_buffer = dataset.episode_buffer
-        saved_episode_index = episode_saver.enqueue(episode_buffer)
-        state["current_episode_index"] = saved_episode_index + 1
-        dataset.episode_buffer = dataset.create_episode_buffer(episode_index=state["current_episode_index"])
-        pending = episode_saver.pending_count()
-        log_say(
-            f"Queued episode {saved_episode_index + 1} for saving. "
-            f"Ready for episode {state['current_episode_index'] + 1}. Pending saves: {pending}."
-        )
-        logger.info("Episode %s queued for background save.", saved_episode_index + 1)
+        dataset.save_episode()
+        log_say(f"Saved episode {dataset.num_episodes}. Ready for episode {dataset.num_episodes + 1}.")
+        logger.info("Dataset saved under: %s", dataset_path.resolve())
 
 
 def extract_preview_frame(observation: dict) -> tuple[str, np.ndarray] | None:
@@ -503,24 +334,12 @@ def show_preview_if_available(observation: dict, *, enabled: bool):
         return
 
 
-def run_record_loop(
-    robot,
-    teleop,
-    dataset,
-    dataset_features,
-    events,
-    fps,
-    task,
-    dataset_path: Path,
-    show_preview: bool,
-    episode_saver: AsyncEpisodeSaver,
-    state: dict,
-):
+def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task, dataset_path: Path, show_preview: bool):
     dt = 1.0 / fps
 
     while not events["stop_recording"]:
         loop_start = time.perf_counter()
-        handle_control_events(dataset, events, dataset_path, episode_saver, state)
+        handle_control_events(dataset, events, dataset_path)
 
         action = teleop.get_action()
         performed_action = robot.send_action(action)
@@ -554,6 +373,11 @@ def main():
         logger.info("Cameras: disabled (--no-camera)")
     else:
         logger.info("Camera specs: %s", args.camera if args.camera else [f"{args.camera_name}={args.realsense_id}"])
+        logger.info(
+            "Dataset fps (meta + loop): %s | RealSense capture fps: %s",
+            args.fps,
+            args.camera_fps,
+        )
 
     robot = FrankaFERGripper(build_robot_config(args))
     teleop = build_subarm_teleop_from_calibration(
@@ -587,7 +411,7 @@ def main():
         assert_dataset_features_compatible(dataset, dataset_features)
     else:
         logger.info("Creating new dataset at %s", dataset_path)
-        if dataset_path.exists() and args.resume:
+        if dataset_path.exists() and args.resume and not args.overwrite:
             raise ValueError(f"Cannot resume from invalid dataset: {dataset_path}")
         if dataset_path.exists() and args.overwrite:
             logger.warning("Removing existing dataset directory (--overwrite): %s", dataset_path)
@@ -609,8 +433,6 @@ def main():
     ensure_episode_buffer(dataset)
 
     listener = None
-    episode_saver = AsyncEpisodeSaver(dataset, dataset_path)
-    state = {"current_episode_index": dataset.num_episodes}
     try:
         logger.info("Connecting robot...")
         robot.connect(calibrate=False)
@@ -646,16 +468,9 @@ def main():
             task=args.task,
             dataset_path=dataset_path,
             show_preview=(not args.no_camera and not args.hide_preview),
-            episode_saver=episode_saver,
-            state=state,
         )
     finally:
         logger.info("Cleaning up...")
-        save_error = None
-        try:
-            episode_saver.close()
-        except Exception as exc:
-            save_error = exc
         try:
             import cv2
 
@@ -668,8 +483,6 @@ def main():
             teleop.disconnect()
         if robot.is_connected:
             robot.disconnect()
-        if save_error is not None:
-            raise save_error
 
 
 if __name__ == "__main__":

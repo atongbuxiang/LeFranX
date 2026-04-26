@@ -31,7 +31,7 @@ DEFAULT_CAMERAS = {
     "realsense_wrist": "241122305042",
     "realsense_topdown": "241122300571",
 }
-DEFAULT_HOME = [0, -0.785, 0, -2.356, 0, 1.571, 0]
+DEFAULT_HOME = [0, -1.14, 0, -2.37, -0.12, 1.79, 0.164]
 OBS_STATE_NAMES = [f"arm_joint_{i}.pos" for i in range(7)] + ["gripper.pos"]
 
 
@@ -63,18 +63,18 @@ class LatestActionBuffer:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    parser.add_argument("--remote-host", default="127.0.0.1", help="OpenPI policy server host.")
+    parser.add_argument("--remote-host", default="10.1.83.246", help="OpenPI policy server host.")
     parser.add_argument("--remote-port", type=int, default=8000, help="OpenPI policy server port.")
     parser.add_argument("--api-key", default=None, help="Optional API key for the OpenPI websocket server.")
     parser.add_argument(
         "--openpi-root",
         type=Path,
-        default=Path(__file__).resolve().parents[3] / "openpi0.5",
+        default="/home/rognuc/openpi0.5",
         help="OpenPI repo root. Used only to import the lightweight openpi-client package if it is not installed.",
     )
-    parser.add_argument("--prompt", required=True, help="Task instruction sent to the policy.")
+    parser.add_argument("--prompt", required=True, help="Pick up the green apple and place it in the upper left corner of the table.")
 
-    parser.add_argument("--control-fps", type=float, default=30.0, help="Robot action execution frequency.")
+    parser.add_argument("--control-fps", type=float, default=10.0, help="Robot action execution frequency.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
