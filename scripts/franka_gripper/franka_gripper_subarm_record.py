@@ -39,8 +39,6 @@ from lerobot.utils.utils import init_logging, log_say
 from lerobot.utils.visualization_utils import _init_rerun
 
 DEFAULT_FPS = 15
-# RealSense 在固定分辨率下只支持部分 FPS（如 640x480 常见为 6/15/30/60），与数据集录制频率解耦。
-DEFAULT_CAMERA_FPS = 30
 DEFAULT_TASK_DESCRIPTION = "Teleoperate Franka + gripper with subarm."
 DEFAULT_DATASET_NAME = "pick_banana"
 DEFAULT_DATASET_ROOT = Path("/mnt/data")
@@ -66,15 +64,6 @@ def parse_args():
     )
     parser.add_argument("--task", type=str, default=DEFAULT_TASK_DESCRIPTION)
     parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
-    parser.add_argument(
-        "--camera-fps",
-        type=int,
-        default=DEFAULT_CAMERA_FPS,
-        help=(
-            "RealSense 彩色流 FPS（须为当前分辨率下设备支持的档位，如 640x480 常用 15 或 30）。"
-            "与 --fps（数据集时间轴与主循环）独立；若设为与 --fps 相同且硬件不支持会无法打开相机。"
-        ),
-    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--overwrite",
@@ -117,36 +106,7 @@ def parse_args():
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true", default=False)
-    parser.add_argument(
-        "--hide-preview",
-        action="store_true",
-        help="Disable OpenCV live camera preview window during recording.",
-    )
-    parser.add_argument(
-        "--no-camera",
-        action="store_true",
-        help="Do not use RealSense; dataset is proprioception + action only (no images).",
-    )
     return parser.parse_args()
-
-
-def detect_first_realsense_serial() -> str:
-    """Return first connected RealSense serial, or empty string if not found."""
-    try:
-        import pyrealsense2 as rs
-    except Exception as exc:
-        logger.debug("pyrealsense2 import failed: %s", exc)
-        return ""
-
-    try:
-        ctx = rs.context()
-        for dev in ctx.query_devices():
-            serial = dev.get_info(rs.camera_info.serial_number)
-            if serial:
-                return str(serial)
-    except Exception as exc:
-        logger.warning("Failed to query RealSense devices: %s", exc)
-    return ""
 
 
 def build_subarm_teleop_from_calibration(
@@ -316,9 +276,7 @@ def extract_preview_frame(observation: dict) -> tuple[str, np.ndarray] | None:
     return None
 
 
-def show_preview_if_available(observation: dict, *, enabled: bool):
-    if not enabled:
-        return
+def show_preview_if_available(observation: dict):
     preview = extract_preview_frame(observation)
     if preview is None:
         return
@@ -334,7 +292,7 @@ def show_preview_if_available(observation: dict, *, enabled: bool):
         return
 
 
-def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task, dataset_path: Path, show_preview: bool):
+def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task, dataset_path: Path):
     dt = 1.0 / fps
 
     while not events["stop_recording"]:
@@ -344,7 +302,7 @@ def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task,
         action = teleop.get_action()
         performed_action = robot.send_action(action)
         observation = robot.get_observation()
-        show_preview_if_available(observation, enabled=show_preview)
+        show_preview_if_available(observation)
 
         if events["recording"]:
             frame = {}
@@ -359,7 +317,7 @@ def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task,
 
 def main():
     args = parse_args()
-    if not args.no_camera and not args.camera and not args.realsense_id:
+    if not args.camera and not args.realsense_id:
         args.camera = [f"{name}={serial}" for name, serial in DEFAULT_CAMERAS.items()]
         logger.info("Using default RealSense cameras: %s", args.camera)
 
@@ -369,15 +327,8 @@ def main():
     logger.info("Leader: degrees=%s (--leader-normalized if标定为 [-100,100])", not args.leader_normalized)
     logger.info("Dataset: %s", args.dataset_name)
     logger.info("Task: %s", args.task)
-    if args.no_camera:
-        logger.info("Cameras: disabled (--no-camera)")
-    else:
-        logger.info("Camera specs: %s", args.camera if args.camera else [f"{args.camera_name}={args.realsense_id}"])
-        logger.info(
-            "Dataset fps (meta + loop): %s | RealSense capture fps: %s",
-            args.fps,
-            args.camera_fps,
-        )
+    logger.info("Camera specs: %s", args.camera if args.camera else [f"{args.camera_name}={args.realsense_id}"])
+    logger.info("Unified recording fps (control + camera + dataset): %s", args.fps)
 
     robot = FrankaFERGripper(build_robot_config(args))
     teleop = build_subarm_teleop_from_calibration(
@@ -387,7 +338,7 @@ def main():
     )
 
     logger.info("Setting up dataset...")
-    dataset_features = build_recording_dataset_features(robot, use_videos=not args.no_camera)
+    dataset_features = build_recording_dataset_features(robot, use_videos=True)
 
     logger.info("Robot action features: %s", list(robot.action_features.keys()))
     logger.info("Robot observation features: %s", list(robot.observation_features.keys()))
@@ -427,8 +378,8 @@ def main():
             fps=args.fps,
             features=dataset_features,
             robot_type=robot.name,
-            use_videos=not args.no_camera,
-            image_writer_threads=0 if args.no_camera else 4,
+            use_videos=True,
+            image_writer_threads=4,
         )
     ensure_episode_buffer(dataset)
 
@@ -454,8 +405,7 @@ def main():
         print("  n: save current buffer and move to the next episode")
         print("  x: clear current buffer")
         print("  Esc: stop recording session")
-        if not args.no_camera and not args.hide_preview:
-            print("  Live preview: enabled (OpenCV window)")
+        print("  Live preview: enabled (OpenCV window)")
         log_say(f"Ready for episode {dataset.num_episodes + 1}. Press r to start recording.")
 
         run_record_loop(
@@ -467,7 +417,6 @@ def main():
             fps=args.fps,
             task=args.task,
             dataset_path=dataset_path,
-            show_preview=(not args.no_camera and not args.hide_preview),
         )
     finally:
         logger.info("Cleaning up...")

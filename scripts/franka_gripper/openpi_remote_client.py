@@ -74,7 +74,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prompt", required=True, help="Pick up the green apple and place it in the upper left corner of the table.")
 
-    parser.add_argument("--control-fps", type=float, default=10.0, help="Robot action execution frequency.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -86,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gripper-port", default="/dev/ttyUSB0")
     parser.add_argument("--gripper-baud", type=int, default=115200)
     parser.add_argument("--gripper-home", type=float, default=1.0)
-    parser.add_argument("--fps", type=int, default=30, help="Camera capture fps for RealSense configs.")
+    parser.add_argument("--fps", type=float, default=10.0, help="Unified camera capture and robot control frequency.")
     parser.add_argument(
         "--camera",
         action="append",
@@ -266,7 +265,7 @@ def inference_loop(
     args: argparse.Namespace,
 ) -> None:
     sequence_id = 0
-    control_dt_s = 1.0 / args.control_fps
+    control_dt_s = 1.0 / args.fps
     while not stop_event.is_set():
         try:
             observation_time_s = time.monotonic()
@@ -329,7 +328,7 @@ def control_loop(
     action_keys: list[str],
     args: argparse.Namespace,
 ) -> None:
-    dt_s = 1.0 / args.control_fps
+    dt_s = 1.0 / args.fps
     current_sequence_id: int | None = None
     action_cursor = 0
 
@@ -376,8 +375,8 @@ def main() -> None:
     from lerobot.utils.utils import init_logging
 
     init_logging()
-    if args.control_fps <= 0:
-        raise ValueError(f"--control-fps must be positive, got {args.control_fps}")
+    if args.fps <= 0:
+        raise ValueError(f"--fps must be positive, got {args.fps}")
 
     normalize_camera_args(args)
     configure_openpi_client_import(args.openpi_root)
