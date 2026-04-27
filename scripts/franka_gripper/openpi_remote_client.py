@@ -85,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gripper-port", default="/dev/ttyUSB0")
     parser.add_argument("--gripper-baud", type=int, default=115200)
     parser.add_argument("--gripper-home", type=float, default=1.0)
-    parser.add_argument("--fps", type=float, default=10.0, help="Unified camera capture and robot control frequency.")
+    parser.add_argument("--fps", type=float, default=30.0, help="Unified camera capture and robot control frequency.")
     parser.add_argument(
         "--camera",
         action="append",

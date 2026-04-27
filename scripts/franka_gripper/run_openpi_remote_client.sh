@@ -7,7 +7,7 @@ python scripts/franka_gripper/openpi_remote_client.py \
   --remote-port "${REMOTE_PORT:-8000}" \
   --openpi-root "${OPENPI_ROOT:-/home/rognuc/openpi0.5}" \
   --prompt "${PROMPT}" \
-  --fps "${FPS:-10}" \
+  --fps "${FPS:-30}" \
   --robot-ip "${ROBOT_IP:-172.16.0.1}" \
   --robot-port "${ROBOT_PORT:-5000}" \
   --gripper-port "${GRIPPER_PORT:-/dev/ttyUSB0}" \

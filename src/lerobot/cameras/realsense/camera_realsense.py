@@ -268,12 +268,15 @@ class RealSenseCamera(Camera):
         rs.config.enable_device(rs_config, self.serial_number)
 
         if self.width and self.height and self.fps:
+            capture_width = int(self.capture_width)
+            capture_height = int(self.capture_height)
+            fps = int(round(self.fps))
             rs_config.enable_stream(
-                rs.stream.color, self.capture_width, self.capture_height, rs.format.rgb8, self.fps
+                rs.stream.color, capture_width, capture_height, rs.format.rgb8, fps
             )
             if self.use_depth:
                 rs_config.enable_stream(
-                    rs.stream.depth, self.capture_width, self.capture_height, rs.format.z16, self.fps
+                    rs.stream.depth, capture_width, capture_height, rs.format.z16, fps
                 )
         else:
             rs_config.enable_stream(rs.stream.color)
