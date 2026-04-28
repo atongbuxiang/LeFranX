@@ -13,9 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
+
 import numpy as np
 
-from lerobot.datasets.utils import load_image_as_numpy
+from lerobot.datasets.utils import is_depth_feature, load_depth_png_as_numpy, load_image_as_numpy
 
 
 def estimate_num_samples(
@@ -91,6 +93,10 @@ def compute_episode_stats(episode_data: dict[str, list[str] | np.ndarray], featu
             ep_ft_array = sample_images(data)  # data is a list of image paths
             axes_to_reduce = (0, 2, 3)  # keep channel dim
             keepdims = True
+        elif is_depth_feature(key, features[key]) and isinstance(data, list):
+            ep_ft_array = np.stack([load_depth_png_as_numpy(Path(path)) for path in data])
+            axes_to_reduce = 0
+            keepdims = False
         else:
             ep_ft_array = data  # data is already a np.ndarray
             axes_to_reduce = 0  # compute stats over the first axis
@@ -119,6 +125,8 @@ def _assert_type_and_shape(stats_list: list[dict[str, dict]]):
                     raise ValueError("Number of dimensions must be at least 1, and is 0 instead.")
                 if k == "count" and v.shape != (1,):
                     raise ValueError(f"Shape of 'count' must be (1), but is {v.shape} instead.")
+                if fkey.endswith("_depth"):
+                    continue
                 if "image" in fkey and k != "count" and v.shape != (3, 1, 1):
                     raise ValueError(f"Shape of '{k}' must be (3,1,1), but is {v.shape} instead.")
 

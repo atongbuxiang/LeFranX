@@ -32,7 +32,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.compute_stats import aggregate_stats, compute_episode_stats
-from lerobot.datasets.image_writer import AsyncImageWriter, write_image
+from lerobot.datasets.image_writer import AsyncImageWriter, write_depth_png, write_image
 from lerobot.datasets.utils import (
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
@@ -52,7 +52,9 @@ from lerobot.datasets.utils import (
     get_hf_features_from_features,
     get_safe_version,
     hf_transform_to_torch,
+    is_depth_feature,
     is_valid_version,
+    load_depth_png_as_numpy,
     load_episodes,
     load_episodes_stats,
     load_info,
@@ -183,6 +185,11 @@ class LeRobotDatasetMetadata:
     def camera_keys(self) -> list[str]:
         """Keys to access visual modalities (regardless of their storage method)."""
         return [key for key, ft in self.features.items() if ft["dtype"] in ["video", "image"]]
+
+    @property
+    def depth_keys(self) -> list[str]:
+        """Keys to access depth maps stored as 16-bit PNG files."""
+        return [key for key, ft in self.features.items() if is_depth_feature(key, ft)]
 
     @property
     def names(self) -> dict[str, list | dict]:
@@ -508,7 +515,9 @@ class LeRobotDataset(torch.utils.data.Dataset):
         upload_large_folder: bool = False,
         **card_kwargs,
     ) -> None:
-        ignore_patterns = ["images/"]
+        ignore_patterns = (
+            [f"images/{key}/" for key in self.meta.camera_keys] if self.meta.depth_keys else ["images/"]
+        )
         if not push_videos:
             ignore_patterns.append("videos/")
 
@@ -591,6 +600,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 for ep_idx in episodes
             ]
             fpaths += video_files
+        if len(self.meta.depth_keys) > 0:
+            depth_files = [
+                str(self._get_image_file_path(ep_idx, depth_key, frame_idx).relative_to(self.root))
+                for depth_key in self.meta.depth_keys
+                for ep_idx in episodes
+                for frame_idx in range(self.meta.episodes[ep_idx]["length"])
+            ]
+            fpaths += depth_files
 
         return fpaths
 
@@ -674,11 +691,22 @@ class LeRobotDataset(torch.utils.data.Dataset):
         return query_timestamps
 
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
-        return {
-            key: torch.stack(self.hf_dataset.select(q_idx)[key])
-            for key, q_idx in query_indices.items()
-            if key not in self.meta.video_keys
-        }
+        result = {}
+        for key, q_idx in query_indices.items():
+            if key in self.meta.video_keys:
+                continue
+            values = self.hf_dataset.select(q_idx)[key]
+            if is_depth_feature(key, self.features[key]):
+                result[key] = torch.stack([self._load_depth_frame(path) for path in values])
+            else:
+                result[key] = torch.stack(values)
+        return result
+
+    def _load_depth_frame(self, path: str | Path) -> torch.Tensor:
+        depth_path = Path(path)
+        if not depth_path.is_absolute():
+            depth_path = self.root / depth_path
+        return torch.from_numpy(load_depth_png_as_numpy(depth_path))
 
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict[str, torch.Tensor]:
         """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
@@ -705,6 +733,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx) -> dict:
         item = self.hf_dataset[idx]
         ep_idx = item["episode_index"].item()
+
+        for key in self.meta.depth_keys:
+            if key in item:
+                item[key] = self._load_depth_frame(item[key])
 
         query_indices = None
         if self.delta_indices is not None:
@@ -758,13 +790,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
         )
         return self.root / fpath
 
-    def _save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
+    def _save_image(
+        self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, is_depth: bool = False
+    ) -> None:
         if self.image_writer is None:
             if isinstance(image, torch.Tensor):
                 image = image.cpu().numpy()
-            write_image(image, fpath)
+            if is_depth:
+                write_depth_png(image, fpath)
+            else:
+                write_image(image, fpath)
         else:
-            self.image_writer.save_image(image=image, fpath=fpath)
+            self.image_writer.save_image(image=image, fpath=fpath, is_depth=is_depth)
 
     def add_frame(self, frame: dict, task: str, timestamp: float | None = None) -> None:
         """
@@ -797,13 +834,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                     f"An element of the frame is not in the features. '{key}' not in '{self.features.keys()}'."
                 )
 
-            if self.features[key]["dtype"] in ["image", "video"]:
+            if self.features[key]["dtype"] in ["image", "video"] or is_depth_feature(key, self.features[key]):
                 img_path = self._get_image_file_path(
                     episode_index=self.episode_buffer["episode_index"], image_key=key, frame_index=frame_index
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
-                self._save_image(frame[key], img_path)
+                self._save_image(frame[key], img_path, is_depth=is_depth_feature(key, self.features[key]))
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
@@ -849,7 +886,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         for key, ft in self.features.items():
             # index, episode_index, task_index are already processed above, and image and video
             # are processed separately by storing image path and frame info as meta data
-            if key in ["index", "episode_index", "task_index"] or ft["dtype"] in ["image", "video"]:
+            if (
+                key in ["index", "episode_index", "task_index"]
+                or ft["dtype"] in ["image", "video"]
+                or is_depth_feature(key, ft)
+            ):
                 continue
             episode_buffer[key] = np.stack(episode_buffer[key])
 
@@ -902,6 +943,12 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
     def _save_episode_table(self, episode_buffer: dict, episode_index: int) -> None:
         episode_dict = {key: episode_buffer[key] for key in self.hf_features}
+        for key in self.meta.depth_keys:
+            if key in episode_dict:
+                episode_dict[key] = [
+                    str(Path(path).relative_to(self.root)) if Path(path).is_absolute() else str(path)
+                    for path in episode_dict[key]
+                ]
         ep_dataset = datasets.Dataset.from_dict(episode_dict, features=self.hf_features, split="train")
         ep_dataset = embed_images(ep_dataset)
         self.hf_dataset = concatenate_datasets([self.hf_dataset, ep_dataset])
@@ -915,7 +962,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Clean up image files for the current episode buffer
         if self.image_writer is not None:
-            for cam_key in self.meta.camera_keys:
+            for cam_key in self.meta.camera_keys + self.meta.depth_keys:
                 img_dir = self._get_image_file_path(
                     episode_index=episode_index, image_key=cam_key, frame_index=0
                 ).parent

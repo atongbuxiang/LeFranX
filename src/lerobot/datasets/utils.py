@@ -254,6 +254,19 @@ def load_image_as_numpy(
     return img_array
 
 
+def is_depth_feature(key: str, feature: dict | None = None) -> bool:
+    return key.endswith("_depth") and (feature is None or feature.get("dtype") == "uint16")
+
+
+def load_depth_png_as_numpy(fpath: str | Path, channel_last: bool = True) -> np.ndarray:
+    depth = np.array(PILImage.open(fpath), dtype=np.uint16)
+    if depth.ndim != 2:
+        raise ValueError(f"Depth PNG should be single-channel 16-bit, got shape {depth.shape} from {fpath}.")
+    if channel_last:
+        depth = depth[..., None]
+    return depth
+
+
 def hf_transform_to_torch(items_dict: dict[torch.Tensor | None]):
     """Get a transform function that convert items from Hugging Face dataset (pyarrow)
     to torch tensors. Importantly, images are converted from PIL, which corresponds to
@@ -366,6 +379,10 @@ def get_hf_features_from_features(features: dict) -> datasets.Features:
             continue
         elif ft["dtype"] == "image":
             hf_features[key] = datasets.Image()
+        elif is_depth_feature(key, ft):
+            # Store depth frames as external 16-bit PNG paths while keeping the public
+            # dataset schema as uint16 arrays.
+            hf_features[key] = datasets.Value(dtype="string")
         elif ft["shape"] == (1,):
             hf_features[key] = datasets.Value(dtype=ft["dtype"])
         elif len(ft["shape"]) == 1:

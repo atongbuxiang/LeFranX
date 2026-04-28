@@ -81,14 +81,42 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
         print(f"Error writing image {fpath}: {e}")
 
 
+def depth_array_to_pil_image(depth_array: np.ndarray) -> PIL.Image.Image:
+    if depth_array.ndim == 3:
+        if depth_array.shape[-1] == 1:
+            depth_array = depth_array[..., 0]
+        elif depth_array.shape[0] == 1:
+            depth_array = depth_array[0]
+        else:
+            raise ValueError(f"Depth image should have one channel, got shape {depth_array.shape}.")
+    elif depth_array.ndim != 2:
+        raise ValueError(f"Depth image should be 2D or single-channel 3D, got shape {depth_array.shape}.")
+
+    if depth_array.dtype != np.uint16:
+        raise ValueError(f"Depth image should be uint16 for 16-bit PNG storage, got {depth_array.dtype}.")
+
+    return PIL.Image.fromarray(depth_array, mode="I;16")
+
+
+def write_depth_png(depth: np.ndarray, fpath: Path):
+    try:
+        img = depth_array_to_pil_image(depth)
+        img.save(fpath)
+    except Exception as e:
+        print(f"Error writing depth image {fpath}: {e}")
+
+
 def worker_thread_loop(queue: queue.Queue):
     while True:
         item = queue.get()
         if item is None:
             queue.task_done()
             break
-        image_array, fpath = item
-        write_image(image_array, fpath)
+        image_array, fpath, is_depth = item
+        if is_depth:
+            write_depth_png(image_array, fpath)
+        else:
+            write_image(image_array, fpath)
         queue.task_done()
 
 
@@ -146,11 +174,11 @@ class AsyncImageWriter:
                 p.start()
                 self.processes.append(p)
 
-    def save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path):
+    def save_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path, is_depth: bool = False):
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
-        self.queue.put((image, fpath))
+        self.queue.put((image, fpath, is_depth))
 
     def wait_until_done(self):
         self.queue.join()
