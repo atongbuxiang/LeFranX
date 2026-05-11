@@ -120,12 +120,14 @@ class FrankaFERGripper(Robot):
 
         start = time.perf_counter()
         for cam_name, cam in self.cameras.items():
-            obs_dict[cam_name] = cam.read()
             if isinstance(cam, RealSenseCamera) and getattr(cam.config, "use_depth", False):
-                depth = cam.read_depth()
-                if depth.ndim == 2:
-                    depth = depth[..., None]
-                obs_dict[f"{cam_name}_depth"] = depth
+                color_img, depth_map = cam.read_color_and_depth()
+                obs_dict[cam_name] = color_img
+                if depth_map.ndim == 2:
+                    depth_map = depth_map[..., None]
+                obs_dict[f"{cam_name}_depth"] = depth_map
+            else:
+                obs_dict[cam_name] = cam.read()
         cam_time = time.perf_counter() - start
 
         logger.debug(

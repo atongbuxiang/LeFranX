@@ -2,7 +2,8 @@
 
 '''
   r: start/stop writing frames into the current buffer
-  s: start/stop automatic joint 7 scan
+  s: start/stop automatic joint 7 scan (direction from --scan-angle-deg)
+  a: start/stop automatic joint 7 scan in the opposite direction (same speed)
   n: save current buffer and move to the next episode
   x: clear current buffer
   Esc: stop recording session
@@ -48,32 +49,31 @@ DEFAULT_CAMERAS = {
     "realsense_wrist": "241122305042",
 }
 
-# Conservative Franka/Panda joint 7 software limits. Override only if the robot setup permits it.
-DEFAULT_JOINT7_MIN_DEG = -165.0
-DEFAULT_JOINT7_MAX_DEG = 165.0
-
 init_logging()
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CAL = Path(__file__).resolve().parents[1] / "franka_gripper" / "subarm_cal.json"
+
+# Franka Emika joint 7 limits (rad), same as libfranka / URDF.
+FRANKA_J7_MIN_RAD = -2.8973
+FRANKA_J7_MAX_RAD = 2.8973
 
 
 @dataclass
 class Joint7ScanController:
     scan_angle_rad: float
     scan_speed_rad_s: float
-    joint_min_rad: float
-    joint_max_rad: float
 
     running: bool = False
     has_latched_target: bool = False
     start_target_rad: float = 0.0
     target_rad: float = 0.0
+    motion_angle_rad: float = 0.0
     elapsed_s: float = 0.0
     last_update_s: float | None = None
     stop_message: str | None = None
 
-    def toggle(self, current_joint7_rad: float | None) -> None:
+    def toggle(self, current_joint7_rad: float | None, *, reverse: bool = False) -> None:
         if self.running:
             self.running = False
             self.last_update_s = None
@@ -85,10 +85,13 @@ class Joint7ScanController:
             self.stop_message = "Joint 7 scan not started because angle or speed is zero."
             return
 
+        motion = (-self.scan_angle_rad) if reverse else self.scan_angle_rad
+        self.motion_angle_rad = motion
+
         start = self.target_rad if self.has_latched_target else current_joint7_rad
         if start is None:
             start = 0.0
-        start = self._clamp(float(start))
+        start = float(start)
 
         self.running = True
         self.has_latched_target = True
@@ -98,7 +101,7 @@ class Joint7ScanController:
         self.last_update_s = None
         self.stop_message = (
             f"Joint 7 scan started at {math.degrees(start):.1f} deg "
-            f"for {math.degrees(self.scan_angle_rad):.1f} deg."
+            f"for {math.degrees(motion):.1f} deg."
         )
 
     def update(self, leader_joint7_rad: float, now_s: float) -> float:
@@ -111,36 +114,33 @@ class Joint7ScanController:
             dt = max(0.0, now_s - self.last_update_s)
         self.last_update_s = now_s
 
-        direction = 1.0 if self.scan_angle_rad > 0.0 else -1.0
+        direction = 1.0 if self.motion_angle_rad > 0.0 else -1.0
         self.elapsed_s += dt
         requested_delta = direction * abs(self.scan_speed_rad_s) * self.elapsed_s
 
-        if abs(requested_delta) >= abs(self.scan_angle_rad):
-            requested_delta = self.scan_angle_rad
+        if abs(requested_delta) >= abs(self.motion_angle_rad):
+            requested_delta = self.motion_angle_rad
             self.running = False
             self.last_update_s = None
             self.stop_message = "Joint 7 scan reached the requested angle; holding final target."
 
         requested_target = self.start_target_rad + requested_delta
-        clamped_target = self._clamp(requested_target)
-        if clamped_target != requested_target:
+        clipped = float(np.clip(requested_target, FRANKA_J7_MIN_RAD, FRANKA_J7_MAX_RAD))
+        if self.running and not math.isclose(clipped, requested_target, rel_tol=0.0, abs_tol=1e-4):
             self.running = False
             self.last_update_s = None
             self.stop_message = (
-                "Joint 7 scan stopped at software limit "
-                f"{math.degrees(clamped_target):.1f} deg; holding target."
+                "Joint 7 scan stopped at hardware limit "
+                f"([{math.degrees(FRANKA_J7_MIN_RAD):.1f}, {math.degrees(FRANKA_J7_MAX_RAD):.1f}] deg). "
+                "Use opposite direction (a/s) from this pose for the return sweep."
             )
-
-        self.target_rad = clamped_target
+        self.target_rad = clipped
         return self.target_rad
 
     def consume_stop_message(self) -> str | None:
         message = self.stop_message
         self.stop_message = None
         return message
-
-    def _clamp(self, value: float) -> float:
-        return min(max(value, self.joint_min_rad), self.joint_max_rad)
 
 
 def parse_args():
@@ -194,6 +194,15 @@ def parse_args():
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true", default=False)
     parser.add_argument(
+        "--max-relative-target-rad",
+        type=float,
+        default=None,
+        help=(
+            "Optional per-step joint target clamp in radians. Default is disabled so calibrated "
+            "SoFranka absolute joint targets follow directly."
+        ),
+    )
+    parser.add_argument(
         "--scan-speed-deg-s",
         type=float,
         default=25.0,
@@ -204,18 +213,6 @@ def parse_args():
         type=float,
         default=360.0,
         help="Requested joint 7 scan angle in degrees. Use a negative value to scan in the opposite direction.",
-    )
-    parser.add_argument(
-        "--joint7-min-deg",
-        type=float,
-        default=DEFAULT_JOINT7_MIN_DEG,
-        help=f"Joint 7 software minimum in degrees. Default: {DEFAULT_JOINT7_MIN_DEG}",
-    )
-    parser.add_argument(
-        "--joint7-max-deg",
-        type=float,
-        default=DEFAULT_JOINT7_MAX_DEG,
-        help=f"Joint 7 software maximum in degrees. Default: {DEFAULT_JOINT7_MAX_DEG}",
     )
     return parser.parse_args()
 
@@ -270,6 +267,7 @@ def init_recording_keyboard_listener():
         "recording": False,
         "toggle_recording": False,
         "toggle_scan": False,
+        "toggle_scan_reverse": False,
         "save_episode": False,
         "clear_buffer": False,
         "stop_recording": False,
@@ -299,6 +297,8 @@ def init_recording_keyboard_listener():
                 events["toggle_recording"] = True
             elif normalized == "s":
                 events["toggle_scan"] = True
+            elif normalized == "a":
+                events["toggle_scan_reverse"] = True
             elif normalized == "n":
                 events["save_episode"] = True
             elif normalized == "x":
@@ -384,10 +384,15 @@ def show_preview_if_available(observation: dict):
 
 
 def handle_scan_toggle(events, scan_controller: Joint7ScanController, current_joint7_rad: float | None) -> None:
-    if not events["toggle_scan"]:
+    if events["toggle_scan_reverse"]:
+        events["toggle_scan_reverse"] = False
+        scan_controller.toggle(current_joint7_rad, reverse=True)
+    elif events["toggle_scan"]:
+        events["toggle_scan"] = False
+        scan_controller.toggle(current_joint7_rad, reverse=False)
+    else:
         return
-    events["toggle_scan"] = False
-    scan_controller.toggle(current_joint7_rad)
+
     message = scan_controller.consume_stop_message()
     if message:
         log_say(message)
@@ -425,7 +430,26 @@ def run_record_loop(
         if message:
             log_say(message)
 
-        performed_action = robot.send_action(action)
+        try:
+            performed_action = robot.send_action(action)
+        except RuntimeError as exc:
+            if not robot.is_connected:
+                log_say("Robot connection lost before action could be sent. Stopping session.")
+                logger.error("Robot disconnected before send_action completed: %s", exc)
+                events["stop_recording"] = True
+                break
+            raise
+        if not robot.is_connected:
+            log_say("Robot connection lost (check joint limits / fault / server). Stopping session.")
+            logger.error(
+                "Robot disconnected after send_action (e.g. broken pipe). "
+                "Joint 7 targets are clamped to [%.4f, %.4f] rad; if this persists, inspect the server.",
+                FRANKA_J7_MIN_RAD,
+                FRANKA_J7_MAX_RAD,
+            )
+            events["stop_recording"] = True
+            break
+
         observation = robot.get_observation()
         if "joint_6.pos" in observation:
             last_robot_joint7_rad = float(observation["joint_6.pos"])
@@ -444,8 +468,6 @@ def run_record_loop(
 
 def main():
     args = parse_args()
-    if args.joint7_min_deg >= args.joint7_max_deg:
-        raise ValueError("--joint7-min-deg must be smaller than --joint7-max-deg")
 
     if not args.camera and not args.realsense_id:
         args.camera = [f"{name}={serial}" for name, serial in DEFAULT_CAMERAS.items()]
@@ -459,12 +481,11 @@ def main():
     logger.info("Task: %s", args.task)
     logger.info("Camera specs: %s", args.camera if args.camera else [f"{args.camera_name}={args.realsense_id}"])
     logger.info("Unified recording fps (control + camera + dataset): %s", args.fps)
+    logger.info("Per-step relative target clamp: %s", args.max_relative_target_rad)
     logger.info(
-        "Joint 7 scan: angle=%.1f deg, speed=%.1f deg/s, limits=[%.1f, %.1f] deg",
+        "Joint 7 scan: angle=%.1f deg, speed=%.1f deg/s (Joint 7 and per-step targets are software-clamped)",
         args.scan_angle_deg,
         abs(args.scan_speed_deg_s),
-        args.joint7_min_deg,
-        args.joint7_max_deg,
     )
 
     robot = FrankaFER(build_robot_config(args))
@@ -476,8 +497,6 @@ def main():
     scan_controller = Joint7ScanController(
         scan_angle_rad=math.radians(args.scan_angle_deg),
         scan_speed_rad_s=math.radians(abs(args.scan_speed_deg_s)),
-        joint_min_rad=math.radians(args.joint7_min_deg),
-        joint_max_rad=math.radians(args.joint7_max_deg),
     )
 
     logger.info("Setting up dataset...")
@@ -543,17 +562,21 @@ def main():
         logger.info("Starting recording session...")
         print("\nKeyboard controls:")
         print("  r: start/stop writing frames into the current buffer")
-        print("  s: start/stop automatic joint 7 scan")
+        print("  s: start/stop automatic joint 7 scan (--scan-angle-deg direction)")
+        print("  a: start/stop automatic joint 7 scan (opposite direction, same speed)")
         print("  n: save current buffer and move to the next episode")
         print("  x: clear current buffer")
         print("  Esc: stop recording session")
         print("  Live preview: enabled (OpenCV window)")
         print(
             "  Joint 7 scan: "
-            f"{args.scan_angle_deg:.1f} deg at {abs(args.scan_speed_deg_s):.1f} deg/s, "
-            f"limits [{args.joint7_min_deg:.1f}, {args.joint7_max_deg:.1f}] deg"
+            f"{args.scan_angle_deg:.1f} deg at {abs(args.scan_speed_deg_s):.1f} deg/s"
         )
-        log_say(f"Ready for episode {dataset.num_episodes + 1}. Press r to start recording, s to scan.")
+        log_say(
+            "Ready for episode "
+            f"{dataset.num_episodes + 1}. Press r to start recording, s or a to scan "
+            "(opposite rotations)."
+        )
 
         run_record_loop(
             robot=robot,
@@ -578,8 +601,10 @@ def main():
             listener.stop()
         if teleop.is_connected:
             teleop.disconnect()
-        if robot.is_connected:
+        try:
             robot.disconnect()
+        except Exception as exc:
+            logger.warning("Robot disconnect cleanup: %s", exc)
 
 
 if __name__ == "__main__":

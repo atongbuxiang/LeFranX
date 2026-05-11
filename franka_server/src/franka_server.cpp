@@ -364,9 +364,35 @@ private:
     }
     
 public:
+    bool recoverRobotErrors(const char* context) {
+        if (robot_ == nullptr) {
+            return false;
+        }
+
+        try {
+            std::cout << "Attempting automatic error recovery";
+            if (context != nullptr) {
+                std::cout << " after " << context;
+            }
+            std::cout << "..." << std::endl;
+            robot_->automaticErrorRecovery();
+            std::cout << "Automatic error recovery succeeded" << std::endl;
+            return true;
+        } catch (const franka::Exception& e) {
+            std::cerr << "Automatic error recovery failed";
+            if (context != nullptr) {
+                std::cerr << " after " << context;
+            }
+            std::cerr << ": " << e.what() << std::endl;
+            return false;
+        }
+    }
+
     bool connectRobot(const std::string& robot_ip, double dynamics_factor = 0.3) {
         try {
             robot_ = new franka::Robot(robot_ip);
+
+            recoverRobotErrors("connecting to robot");
             
             // Set default collision behavior directly
             robot_->setCollisionBehavior(
@@ -546,6 +572,7 @@ public:
             
         } catch (const franka::ControlException& e) {
             std::cerr << "Control exception: " << e.what() << std::endl;
+            recoverRobotErrors("control exception");
         }
         
         // After control loop ends, explicitly stop the robot

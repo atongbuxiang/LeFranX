@@ -17,6 +17,7 @@ from lerobot.robots.franka_fer.franka_fer_config import FrankaFERConfig
 
 
 DEFAULT_HOME = [0, -0.785, 0, -2.356, 0, 1.571, 0]
+DEFAULT_MAX_RELATIVE_TARGET_RAD = None
 OBS_STATE_NAMES = [f"joint_{i}.pos" for i in range(7)]
 OBS_VELOCITY_NAMES = [f"joint_{i}.vel" for i in range(7)]
 OBS_EEPOSE_NAMES = ["x", "y", "z", "qx", "qy", "qz", "qw"]
@@ -61,7 +62,7 @@ def build_robot_config(args) -> FrankaFERConfig:
         server_ip=args.robot_ip,
         server_port=args.robot_port,
         home_position=list(DEFAULT_HOME),
-        max_relative_target=None,
+        max_relative_target=getattr(args, "max_relative_target_rad", DEFAULT_MAX_RELATIVE_TARGET_RAD),
         cameras=cameras,
     )
 

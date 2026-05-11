@@ -50,6 +50,15 @@ def parse_args():
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true", default=False)
+    parser.add_argument(
+        "--max-relative-target-rad",
+        type=float,
+        default=None,
+        help=(
+            "Optional per-step joint target clamp in radians. Default is disabled so calibrated "
+            "SoFranka absolute joint targets follow directly."
+        ),
+    )
     return parser.parse_args()
 
 

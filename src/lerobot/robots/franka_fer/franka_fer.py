@@ -15,6 +15,9 @@ from .franka_fer_config import FrankaFERConfig
 
 logger = logging.getLogger(__name__)
 
+FRANKA_JOINT_MIN_RAD = np.array([-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973])
+FRANKA_JOINT_MAX_RAD = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973])
+
 
 class FrankaFER(Robot):
     """
@@ -35,6 +38,7 @@ class FrankaFER(Robot):
         self.socket = None
         self.cameras = make_cameras_from_configs(config.cameras)
         self._is_connected = False
+        self._last_joint_positions: np.ndarray | None = None
         self._vr_teleoperator = None  # Reference to VR teleoperator for pose reset
         
     @cached_property
@@ -74,11 +78,20 @@ class FrankaFER(Robot):
         
         try:
             self.socket.send((command + "\n").encode())
-            response = self.socket.recv(1024).decode().strip()
+            raw_response = self.socket.recv(1024)
+            if not raw_response:
+                raise ConnectionError("Robot server closed the socket")
+            response = raw_response.decode().strip()
             return response
         except Exception as e:
             logger.error(f"Communication error: {e}")
             self._is_connected = False
+            try:
+                if self.socket is not None:
+                    self.socket.close()
+            except OSError:
+                pass
+            self.socket = None
             return None
     
     def _health_check(self) -> bool:
@@ -117,12 +130,29 @@ class FrankaFER(Robot):
             logger.error(f"Failed to connect: {e}")
             raise ConnectionError("Failed to connect to Franka robot server")
         
-        # Connect cameras if any
-        for cam in self.cameras.values():
-            cam.connect()
-        
-        # Configure robot
-        self.configure()
+        connected_cameras = []
+        try:
+            # Connect cameras if any
+            for cam in self.cameras.values():
+                cam.connect()
+                connected_cameras.append(cam)
+            
+            # Configure robot
+            self.configure()
+        except Exception:
+            for cam in reversed(connected_cameras):
+                try:
+                    cam.disconnect()
+                except Exception:
+                    pass
+            if self.socket is not None:
+                try:
+                    self.socket.close()
+                except OSError:
+                    pass
+            self.socket = None
+            self._is_connected = False
+            raise
         
         logger.info(f"{self} connected")
     
@@ -166,6 +196,7 @@ class FrankaFER(Robot):
                 positions = np.array([float(x) for x in parts[:7]])
                 velocities = np.array([float(x) for x in parts[7:14]])
                 ee_pose = np.array([float(x) for x in parts[14:30]])
+                self._last_joint_positions = positions.copy()
                 
                 return {
                     "joint_positions": positions,
@@ -175,6 +206,7 @@ class FrankaFER(Robot):
             elif len(parts) >= 14:  # Backwards compatibility - old server without ee_pose
                 positions = np.array([float(x) for x in parts[:7]])
                 velocities = np.array([float(x) for x in parts[7:14]])
+                self._last_joint_positions = positions.copy()
                 
                 return {
                     "joint_positions": positions,
@@ -193,29 +225,33 @@ class FrankaFER(Robot):
         # Get full robot state including ee_pose
         start = time.perf_counter()
         robot_state = self._get_robot_state()
-        if robot_state is not None:
-            # Add joint positions
-            positions = robot_state["joint_positions"]
-            for i, pos in enumerate(positions):
-                obs_dict[f"joint_{i}.pos"] = float(pos)
-            
-            # Add joint velocities if available
-            if robot_state["joint_velocities"] is not None:
-                velocities = robot_state["joint_velocities"]
-                for i, vel in enumerate(velocities):
-                    obs_dict[f"joint_{i}.vel"] = float(vel)
-            
-            # Add end-effector pose if available (as individual float features)
-            if robot_state["ee_pose"] is not None:
-                ee_pose_flat = robot_state["ee_pose"]
-                for i, value in enumerate(ee_pose_flat):
-                    obs_dict[f"ee_pose.{i:02d}"] = float(value)
-            else:
-                # Fallback: identity matrix flattened if ee_pose not available from robot server
-                identity_flat = np.eye(4).flatten()
-                for i, value in enumerate(identity_flat):
-                    obs_dict[f"ee_pose.{i:02d}"] = float(value)
-                logger.warning("End-effector pose not available from robot server, using identity matrix")
+        if robot_state is None:
+            if not self.is_connected:
+                raise ConnectionError(f"{self} lost connection while reading observation")
+            raise RuntimeError(f"{self} returned an invalid robot state response")
+
+        # Add joint positions
+        positions = robot_state["joint_positions"]
+        for i, pos in enumerate(positions):
+            obs_dict[f"joint_{i}.pos"] = float(pos)
+        
+        # Add joint velocities if available
+        if robot_state["joint_velocities"] is not None:
+            velocities = robot_state["joint_velocities"]
+            for i, vel in enumerate(velocities):
+                obs_dict[f"joint_{i}.vel"] = float(vel)
+        
+        # Add end-effector pose if available (as individual float features)
+        if robot_state["ee_pose"] is not None:
+            ee_pose_flat = robot_state["ee_pose"]
+            for i, value in enumerate(ee_pose_flat):
+                obs_dict[f"ee_pose.{i:02d}"] = float(value)
+        else:
+            # Fallback: identity matrix flattened if ee_pose not available from robot server
+            identity_flat = np.eye(4).flatten()
+            for i, value in enumerate(identity_flat):
+                obs_dict[f"ee_pose.{i:02d}"] = float(value)
+            logger.warning("End-effector pose not available from robot server, using identity matrix")
                 
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} read robot state: {dt_ms:.1f}ms")
@@ -223,12 +259,16 @@ class FrankaFER(Robot):
         # Capture images from cameras
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.async_read()
             if isinstance(cam, RealSenseCamera) and getattr(cam.config, "use_depth", False):
-                depth = cam.read_depth()
-                if depth.ndim == 2:
-                    depth = depth[..., None]
-                obs_dict[f"{cam_key}_depth"] = depth
+                # Synchronous aligned RGB+D: async_read_rgbd waits on the background thread, which can
+                # miss the initial 200ms window before the first frame (thread needs up to 500ms).
+                color_img, depth_map = cam.read_color_and_depth(timeout_ms=500)
+                obs_dict[cam_key] = color_img
+                if depth_map.ndim == 2:
+                    depth_map = depth_map[..., None]
+                obs_dict[f"{cam_key}_depth"] = depth_map
+            else:
+                obs_dict[cam_key] = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
         
@@ -248,11 +288,21 @@ class FrankaFER(Robot):
             joint_positions.append(action[key])
         
         target_positions = np.array(joint_positions)
-        #print(target_positions)
+
+        clipped_positions = np.clip(target_positions, FRANKA_JOINT_MIN_RAD, FRANKA_JOINT_MAX_RAD)
+        if not np.allclose(clipped_positions, target_positions, atol=1e-6):
+            logger.warning(
+                "Clamped target positions to Franka joint limits. requested=%s clamped=%s",
+                np.array2string(target_positions, precision=4),
+                np.array2string(clipped_positions, precision=4),
+            )
+            target_positions = clipped_positions
         
         # Apply safety limits if configured
         if self.config.max_relative_target is not None:
-            current_positions = self._get_joint_positions()
+            current_positions = self._last_joint_positions
+            if current_positions is None:
+                current_positions = self._get_joint_positions()
             if current_positions is not None:
                 # Create goal_present_pos dict for safety function
                 goal_present_pos = {}
@@ -262,35 +312,39 @@ class FrankaFER(Robot):
                 # Apply safety limits
                 safe_positions = ensure_safe_goal_position(goal_present_pos, self.config.max_relative_target)
                 target_positions = np.array([safe_positions[f"joint_{i}"] for i in range(7)])
+            else:
+                logger.warning("Could not read current robot joints for relative target clamping.")
         
         # Send command to robot
         cmd = "SET_POSITION " + " ".join(f"{p:.6f}" for p in target_positions)
         response = self._send_command(cmd)
+        if response is None:
+            raise ConnectionError(f"{self} lost connection while sending action")
         if response != "OK":
-            logger.warning("Failed to send action to robot")
+            raise RuntimeError(f"Unexpected response while sending action: {response!r}")
         
         # Return the actual action sent
         return {f"joint_{i}.pos": float(target_positions[i]) for i in range(7)}
     
     def disconnect(self) -> None:
-        """Disconnect from robot"""
-        if not self.is_connected:
-            raise RuntimeError(f"{self} is not connected")
-        
-        # Send disconnect command and close socket
-        try:
-            self._send_command("DISCONNECT")
-            self.socket.close()
-        except:
-            pass
-        
+        """Disconnect from robot. Safe to call multiple times or after a comm failure."""
+        if self.socket is not None and self._is_connected:
+            _ = self._send_command("DISCONNECT")
+        if self.socket is not None:
+            try:
+                self.socket.close()
+            except OSError:
+                pass
         self.socket = None
         self._is_connected = False
-        
-        # Disconnect cameras
+        self._last_joint_positions = None
+
         for cam in self.cameras.values():
-            cam.disconnect()
-        
+            try:
+                cam.disconnect()
+            except Exception:
+                pass
+
         logger.info(f"{self} disconnected")
     
     def reset_to_home(self) -> bool:

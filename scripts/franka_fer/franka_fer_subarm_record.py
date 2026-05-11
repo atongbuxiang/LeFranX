@@ -102,6 +102,15 @@ def parse_args():
     parser.add_argument("--camera-width", type=int, default=640)
     parser.add_argument("--camera-height", type=int, default=480)
     parser.add_argument("--use-depth", action="store_true", default=False)
+    parser.add_argument(
+        "--max-relative-target-rad",
+        type=float,
+        default=None,
+        help=(
+            "Optional per-step joint target clamp in radians. Default is disabled so calibrated "
+            "SoFranka absolute joint targets follow directly."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -273,8 +282,16 @@ def run_record_loop(robot, teleop, dataset, dataset_features, events, fps, task,
         handle_control_events(dataset, events, dataset_path)
 
         action = teleop.get_action()
-        performed_action = robot.send_action(action)
-        observation = robot.get_observation()
+        try:
+            performed_action = robot.send_action(action)
+            observation = robot.get_observation()
+        except (ConnectionError, RuntimeError) as exc:
+            if not robot.is_connected:
+                log_say("Robot connection lost. Stopping session and cleaning up cameras.")
+                logger.error("Robot disconnected during record loop: %s", exc)
+                events["stop_recording"] = True
+                break
+            raise
         show_preview_if_available(observation)
 
         if events["recording"]:
@@ -302,6 +319,7 @@ def main():
     logger.info("Task: %s", args.task)
     logger.info("Camera specs: %s", args.camera if args.camera else [f"{args.camera_name}={args.realsense_id}"])
     logger.info("Unified recording fps (control + camera + dataset): %s", args.fps)
+    logger.info("Per-step relative target clamp: %s", args.max_relative_target_rad)
 
     robot = FrankaFER(build_robot_config(args))
     teleop = build_subarm_teleop_from_calibration(
@@ -401,8 +419,10 @@ def main():
             listener.stop()
         if teleop.is_connected:
             teleop.disconnect()
-        if robot.is_connected:
+        try:
             robot.disconnect()
+        except Exception as exc:
+            logger.warning("Robot cleanup encountered an error after disconnect: %s", exc)
 
 
 if __name__ == "__main__":

@@ -132,6 +132,7 @@ class RealSenseCamera(Camera):
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
         self.latest_frame: np.ndarray | None = None
+        self.latest_depth: np.ndarray | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -184,10 +185,34 @@ class RealSenseCamera(Camera):
             time.sleep(
                 1
             )  # NOTE(Steven): RS cameras need a bit of time to warm up before the first read. If we don't wait, the first read from the warmup will raise.
-            start_time = time.time()
-            while time.time() - start_time < self.warmup_s:
-                self.read()
-                time.sleep(0.1)
+            warmup_deadline = time.time() + max(float(self.warmup_s), 3.0)
+            warmup_ok = False
+            last_exc: Exception | None = None
+            while time.time() < warmup_deadline:
+                try:
+                    if self.use_depth:
+                        self.read_color_and_depth(timeout_ms=1000)
+                    else:
+                        self.read(timeout_ms=1000)
+                    warmup_ok = True
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.debug("%s warmup frame not ready yet, retrying: %s", self, exc)
+                    time.sleep(0.1)
+
+            if not warmup_ok:
+                if self.rs_pipeline is not None:
+                    try:
+                        self.rs_pipeline.stop()
+                    except Exception:
+                        pass
+                self.rs_pipeline = None
+                self.rs_profile = None
+                raise ConnectionError(
+                    f"{self} failed to produce an initial frame during warmup. "
+                    "Check USB bandwidth/power, device occupancy, or try again."
+                ) from last_exc
 
         logger.info(f"{self} connected.")
 
@@ -314,6 +339,10 @@ class RealSenseCamera(Camera):
         """
         Reads a single frame (depth) synchronously from the camera.
 
+        Do not call this on the same pipeline while ``async_read``'s background thread
+        is running; use ``async_read_rgbd`` instead. For a single-threaded pair, prefer
+        ``read_color_and_depth``.
+
         This is a blocking call. It waits for a coherent set of frames (depth)
         from the camera hardware via the RealSense pipeline.
 
@@ -352,6 +381,45 @@ class RealSenseCamera(Camera):
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
         return depth_map_processed
+
+    def read_color_and_depth(
+        self, color_mode: ColorMode | None = None, timeout_ms: int = 200
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Reads one aligned color + depth pair from a single frameset.
+
+        Use this instead of ``read()`` + ``read_depth()`` on the same camera. Competing
+        ``try_wait_for_frames`` calls (e.g. from ``async_read``'s background thread and
+        ``read_depth`` on the same pipeline) are not supported and often time out.
+        """
+        if not self.is_connected:
+            raise RuntimeError(f"{self} is not connected.")
+        if not self.use_depth:
+            raise RuntimeError(
+                f"read_color_and_depth requires depth enabled for {self} (set use_depth=True)."
+            )
+
+        start_time = time.perf_counter()
+        ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
+
+        if not ret or frame is None:
+            raise RuntimeError(f"{self} read_color_and_depth failed (status={ret}).")
+
+        color_frame = frame.get_color_frame()
+        depth_frame = frame.get_depth_frame()
+        if not depth_frame:
+            raise RuntimeError(f"{self} read_color_and_depth missing depth frame.")
+
+        color_image_raw = np.asanyarray(color_frame.get_data())
+        depth_map_raw = np.asanyarray(depth_frame.get_data())
+
+        color_image_processed = self._postprocess_image(color_image_raw, color_mode)
+        depth_map_processed = self._postprocess_image(depth_map_raw, depth_frame=True)
+
+        read_duration_ms = (time.perf_counter() - start_time) * 1e3
+        logger.debug(f"{self} read_color_and_depth took: {read_duration_ms:.1f}ms")
+
+        return color_image_processed, depth_map_processed
 
     def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
         """
@@ -453,10 +521,15 @@ class RealSenseCamera(Camera):
         """
         while not self.stop_event.is_set():
             try:
-                color_image = self.read(timeout_ms=500)
-
-                with self.frame_lock:
-                    self.latest_frame = color_image
+                if self.use_depth:
+                    color_image, depth_map = self.read_color_and_depth(timeout_ms=500)
+                    with self.frame_lock:
+                        self.latest_frame = color_image
+                        self.latest_depth = depth_map
+                else:
+                    color_image = self.read(timeout_ms=500)
+                    with self.frame_lock:
+                        self.latest_frame = color_image
                 self.new_frame_event.set()
 
             except RuntimeError:
@@ -530,6 +603,41 @@ class RealSenseCamera(Camera):
             raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
 
         return frame
+
+    def async_read_rgbd(self, timeout_ms: float = 200) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Returns the latest aligned color and depth from the async reader.
+
+        Required when ``use_depth`` is True and the same camera is used with the
+        background read thread (see ``async_read``). Do not mix ``async_read`` with a
+        separate ``read_depth()`` on the same pipeline.
+        """
+        if not self.is_connected:
+            raise RuntimeError(f"{self} is not connected.")
+        if not self.use_depth:
+            raise RuntimeError(f"async_read_rgbd requires use_depth=True for {self}.")
+
+        if self.thread is None or not self.thread.is_alive():
+            self._start_read_thread()
+
+        if not self.new_frame_event.wait(timeout=timeout_ms / 1000.0):
+            thread_alive = self.thread is not None and self.thread.is_alive()
+            raise TimeoutError(
+                f"Timed out waiting for RGBD from camera {self} after {timeout_ms} ms. "
+                f"Read thread alive: {thread_alive}."
+            )
+
+        with self.frame_lock:
+            frame = self.latest_frame
+            depth_map = self.latest_depth
+            self.new_frame_event.clear()
+
+        if frame is None or depth_map is None:
+            raise RuntimeError(
+                f"Internal error: Event set but missing color or depth for {self}."
+            )
+
+        return frame, depth_map
 
     def disconnect(self):
         """

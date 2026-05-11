@@ -127,7 +127,7 @@ def ensure_safe_goal_position(
             }
 
     if warnings_dict:
-        logging.warning(
+        logging.debug(
             "Relative goal position magnitude had to be clamped to be safe.\n"
             f"{pformat(warnings_dict, indent=4)}"
         )

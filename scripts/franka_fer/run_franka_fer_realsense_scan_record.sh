@@ -1,0 +1,13 @@
+python scripts/franka_fer/franka_fer_realsense_scan_record.py \
+    --scan-angle-deg 180 \
+    --scan-speed-deg-s 20 \
+    --overwrite \
+    --robot-ip 172.16.0.1 \
+    --robot-port 5000 \
+    --leader-port /dev/ttyACM0 \
+    --calibration-json scripts/franka_gripper/subarm_cal.json \
+    --camera wrist=241122305042 \
+    --camera third_person=241122300571 \
+    --camera-width 640 \
+    --camera-height 480 \
+    --use-depth
